@@ -14,7 +14,7 @@ module.exports = {
         // Hoş Geldin Mesajı
         const kanal = member.guild.channels.cache.get(config.hgKanal);
         if (kanal) {
-            kanal.send({ content: `📥 **${member.user.tag}** sunucumuza katıldı! Seninle birlikte **${member.guild.memberCount}** kişiyiz.` });
+            kanal.send({ content: `📥 **${member.user.tag}** Hoşgeldin kingo Seninle birlikte **${member.guild.memberCount}** kişiyiz.` });
         }
     },
 };
