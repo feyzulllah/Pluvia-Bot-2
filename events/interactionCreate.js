@@ -7,10 +7,10 @@ module.exports = {
         if (!command) return;
 
         try {
-            await command.execute(interaction, null, client);
+            await command.execute(interaction, client);
         } catch (error) {
             console.error(error);
-            await interaction.reply({ content: 'Komut çalıştırılırken hata oluştu!', ephemeral: true });
+            await interaction.reply({ content: '❌ Komut çalışırken hata oluştu!', ephemeral: true });
         }
     }
 };
