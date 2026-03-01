@@ -1,6 +1,6 @@
 {
   "prefix": "!",
-  "modLog": "LOG_KANAL_ID",
-  "otoRol": "ROL_ID",
-  "hgKanal": "GIRIS_CIKIS_KANAL_ID"
+  "modLog": "LOG_ID_BURAYA",
+  "otoRol": "ROL_ID_BURAYA",
+  "hgKanal": "KANAL_ID_BURAYA"
 }
