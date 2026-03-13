@@ -1,1 +1,16 @@
-
+{
+  "name": "ticketbot",
+  "version": "1.0.0",
+  "description": "Gelişmiş Discord ticket bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord-html-transcripts": "^3.3.0",
+    "discord.js": "^14.21.0",
+    "dotenv": "^16.6.1"
+  }
+}
