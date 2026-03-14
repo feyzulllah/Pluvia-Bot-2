@@ -1396,12 +1396,14 @@ storage.invites[inviterId].monthly += 1;
       storage.invites[inviterId].invitedUsers.push(invitedName);
     }
 
-    saveData(storage);
-    console.log(`[DAVET] ${usedInvite.inviter.tag} -> ${member.user.tag}`);
-  } catch (error) {
-    console.error("[DAVET TAKIP HATASI]", error);
-  }
-  client.on("voiceStateUpdate", (oldState, newState) => {
+   saveData(storage);
+console.log(`[DAVET] ${usedInvite.inviter.tag} -> ${member.user.tag}`);
+} catch (error) {
+  console.error("[DAVET TAKIP HATASI]", error);
+}
+});
+
+client.on("voiceStateUpdate", (oldState, newState) => {
   try {
     const userId = newState.id;
     ensureUserStats(userId);
