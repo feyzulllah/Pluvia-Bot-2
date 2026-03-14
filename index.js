@@ -33,18 +33,7 @@ mongoose.connect(process.env.MONGO_URI)
 
 const storageSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
-  data: {
-    pendingApplications: { type: Object, default: {} },
-    counters: {
-      application: { type: Number, default: 0 },
-      support: { type: Number, default: 0 },
-      rename: { type: Number, default: 0 }
-    },
-    cooldowns: { type: Object, default: {} },
-    afk: { type: Object, default: {} },
-    stats: { type: Object, default: {} },
-    invites: { type: Object, default: {} }
-  }
+  data: { type: mongoose.Schema.Types.Mixed, default: () => ({}) }
 }, { minimize: false });
 
 const StorageModel = mongoose.model("Storage", storageSchema);
@@ -91,16 +80,22 @@ async function loadData() {
   }
 }
 
-async function saveData(data) {
-  try {
-    await StorageModel.updateOne(
-      { key: "mainStorage" },
-      { $set: { data } },
-      { upsert: true }
-    );
-  } catch (error) {
-    console.error("[MONGO SAVE HATASI]", error);
-  }
+let saveQueue = Promise.resolve();
+
+function saveData(data) {
+  saveQueue = saveQueue.then(async () => {
+    try {
+      await StorageModel.findOneAndUpdate(
+        { key: "mainStorage" },
+        { $set: { data } },
+        { upsert: true, new: true }
+      );
+    } catch (error) {
+      console.error("[MONGO SAVE HATASI]", error);
+    }
+  });
+
+  return saveQueue;
 }
 
 const PANEL_ALLOWED_ROLES = [
