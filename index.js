@@ -5,8 +5,8 @@ const PORT = process.env.PORT || 3000;
 app.get("/", (req, res) => res.send("Bot aktif!"));
 app.listen(PORT, () => console.log(`[WEB] ${PORT} portunda aktif`));
 
-const fs = require("fs");
 const path = require("path");
+const mongoose = require("mongoose");
 const {
   Client,
   GatewayIntentBits,
@@ -26,6 +26,82 @@ const {
 } = require("discord.js");
 
 require("dotenv").config();
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("[MONGO] Bağlandı"))
+  .catch(err => console.error("[MONGO HATASI]", err));
+
+const storageSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  data: {
+    pendingApplications: { type: Object, default: {} },
+    counters: {
+      application: { type: Number, default: 0 },
+      support: { type: Number, default: 0 },
+      rename: { type: Number, default: 0 }
+    },
+    cooldowns: { type: Object, default: {} },
+    afk: { type: Object, default: {} },
+    stats: { type: Object, default: {} },
+    invites: { type: Object, default: {} }
+  }
+}, { minimize: false });
+
+const StorageModel = mongoose.model("Storage", storageSchema);
+
+const defaultStorage = {
+  pendingApplications: {},
+  counters: {
+    application: 0,
+    support: 0,
+    rename: 0
+  },
+  cooldowns: {},
+  afk: {},
+  stats: {},
+  invites: {}
+};
+
+let storage = { ...defaultStorage };
+
+async function loadData() {
+  try {
+    let doc = await StorageModel.findOne({ key: "mainStorage" });
+
+    if (!doc) {
+      doc = await StorageModel.create({
+        key: "mainStorage",
+        data: defaultStorage
+      });
+    }
+
+    storage = {
+      pendingApplications: doc.data?.pendingApplications || {},
+      counters: doc.data?.counters || { application: 0, support: 0, rename: 0 },
+      cooldowns: doc.data?.cooldowns || {},
+      afk: doc.data?.afk || {},
+      stats: doc.data?.stats || {},
+      invites: doc.data?.invites || {}
+    };
+
+    console.log("[MONGO] Storage yüklendi");
+  } catch (error) {
+    console.error("[MONGO LOAD HATASI]", error);
+    storage = { ...defaultStorage };
+  }
+}
+
+async function saveData(data) {
+  try {
+    await StorageModel.updateOne(
+      { key: "mainStorage" },
+      { $set: { data } },
+      { upsert: true }
+    );
+  } catch (error) {
+    console.error("[MONGO SAVE HATASI]", error);
+  }
+}
 
 const PANEL_ALLOWED_ROLES = [
   "1472774718250549399",
@@ -58,53 +134,6 @@ const COOLDOWN_MS = {
   isim: 12 * 60 * 60 * 1000
 };
 
-const dataDir = path.join(__dirname, "data");
-const dataFile = path.join(dataDir, "storage.json");
-
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-if (!fs.existsSync(dataFile)) {
-  fs.writeFileSync(
-    dataFile,
-    JSON.stringify(
-      {
-        pendingApplications: {},
-        counters: {
-          application: 0,
-          support: 0,
-          rename: 0
-        },
-        cooldowns: {},
-        afk: {},
-        stats: {},
-        invites: {}
-      },
-      null,
-      2
-    )
-  );
-}
-
-function loadData() {
-  try {
-    return JSON.parse(fs.readFileSync(dataFile, "utf8"));
-  } catch {
-    return {
-      pendingApplications: {},
-      counters: { application: 0, support: 0, rename: 0 },
-      cooldowns: {},
-      afk: {},
-      stats: {},
-      invites: {}
-    };
-  }
-}
-
-function saveData(data) {
-  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
-}
-
-let storage = loadData();
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -112,7 +141,8 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildInvites,
-    GatewayIntentBits.GuildPresences
+    GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildVoiceStates
   ]
 });
 
@@ -395,6 +425,7 @@ async function cacheInvites() {
 
 client.once(Events.ClientReady, async () => {
   console.log(`[BOT] ${client.user.tag} aktif`);
+  await loadData();
   await registerCommands();
   await cacheInvites();
 });
