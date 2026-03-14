@@ -40,7 +40,6 @@ const APPROVED_ROLE_IDS = [
   "1472747874650558624"
 ];
 
-// Zaten yetkiliyse başvuru yapamasın diye kontrol edilecek roller
 const BLOCKED_APPLICATION_ROLE_IDS = [
   "1481475983348334632",
   "1472747874650558624",
@@ -52,11 +51,11 @@ const INVITE_LINK = "https://discord.gg/pluvia";
 const MIN_ACCOUNT_AGE_DAYS = 30;
 const MIN_GUILD_HOURS = 48;
 
-// 8) Cooldown sistemi
 const COOLDOWN_MS = {
   sorun: 10 * 60 * 1000,
   istek: 10 * 60 * 1000,
-  basvuru: 24 * 60 * 60 * 1000
+  basvuru: 24 * 60 * 60 * 1000,
+  isim: 12 * 60 * 60 * 1000
 };
 
 const dataDir = path.join(__dirname, "data");
@@ -71,7 +70,8 @@ if (!fs.existsSync(dataFile)) {
         pendingApplications: {},
         counters: {
           application: 0,
-          support: 0
+          support: 0,
+          rename: 0
         },
         cooldowns: {}
       },
@@ -87,7 +87,7 @@ function loadData() {
   } catch {
     return {
       pendingApplications: {},
-      counters: { application: 0, support: 0 },
+      counters: { application: 0, support: 0, rename: 0 },
       cooldowns: {}
     };
   }
@@ -152,8 +152,7 @@ function getRemainingCooldown(userId, type) {
 }
 
 function setCooldown(userId, type) {
-  const key = getCooldownKey(userId, type);
-  storage.cooldowns[key] = Date.now();
+  storage.cooldowns[getCooldownKey(userId, type)] = Date.now();
   saveData(storage);
 }
 
@@ -258,6 +257,41 @@ function prettySupportDM(username, type) {
     .setFooter({ text: "Pluvia Destek Ekibi" });
 }
 
+function prettyRenameAcceptDM(username, newName) {
+  return new EmbedBuilder()
+    .setColor("Green")
+    .setTitle("✅ İsim Talebin Onaylandı")
+    .setDescription(
+      [
+        `Merhaba **${username}**,`,
+        "",
+        "Göndermiş olduğun isim güncelleme talebin onaylandı.",
+        `Yeni sunucu adın: **${newName}**`,
+        "",
+        "İyi eğlenceler dileriz. 💜"
+      ].join("\n")
+    )
+    .setFooter({ text: "Pluvia Yönetimi" });
+}
+
+function prettyRenameRejectDM(username, reason) {
+  return new EmbedBuilder()
+    .setColor("Red")
+    .setTitle("❌ İsim Talebin Reddedildi")
+    .setDescription(
+      [
+        `Merhaba **${username}**,`,
+        "",
+        "İsim güncelleme talebin bu kez onaylanmadı.",
+        "",
+        `**Sebep:** ${reason}`,
+        "",
+        "Uygun bir isimle tekrar talep oluşturabilirsin. 💜"
+      ].join("\n")
+    )
+    .setFooter({ text: "Pluvia Yönetimi" });
+}
+
 function getAccountAgeOk(user) {
   const ageMs = Date.now() - user.createdTimestamp;
   return ageMs >= MIN_ACCOUNT_AGE_DAYS * 24 * 60 * 60 * 1000;
@@ -294,56 +328,19 @@ client.on(Events.InteractionCreate, async interaction => {
         .setCustomId("info_menu")
         .setPlaceholder("Bir işlem seçiniz")
         .addOptions([
-          {
-            label: "Katılım Tarihi",
-            description: "Sunucuya giriş tarihinizi öğrenin.",
-            value: "katilim_tarihi",
-            emoji: "🕓"
-          },
-          {
-            label: "Hesap Tarihi",
-            description: "Hesabınızın açılış tarihini öğrenin.",
-            value: "hesap_tarihi",
-            emoji: "📅"
-          },
-          {
-            label: "Rol Bilgisi",
-            description: "Üzerinizde bulunan rolleri listeleyin.",
-            value: "rol_bilgisi",
-            emoji: "🎭"
-          },
-          {
-            label: "Davet Bilgisi",
-            description: "Sunucu davet bağlantısını alın.",
-            value: "davet_bilgisi",
-            emoji: "📨"
-          },
-          {
-            label: "İsim Güncelleme",
-            description: "İsim güncelleme hakkında bilgi alın.",
-            value: "isim_guncelleme",
-            emoji: "✏️"
-          }
+          { label: "Katılım Tarihi", description: "Sunucuya giriş tarihinizi öğrenin.", value: "katilim_tarihi", emoji: "🕓" },
+          { label: "Hesap Tarihi", description: "Hesabınızın açılış tarihini öğrenin.", value: "hesap_tarihi", emoji: "📅" },
+          { label: "Rol Bilgisi", description: "Üzerinizde bulunan rolleri listeleyin.", value: "rol_bilgisi", emoji: "🎭" },
+          { label: "Davet Bilgisi", description: "Sunucu davet bağlantısını alın.", value: "davet_bilgisi", emoji: "📨" },
+          { label: "İsim Güncelleme", description: "İsim güncelleme talebi oluşturun.", value: "isim_guncelleme", emoji: "✏️" }
         ]);
 
       const menuRow = new ActionRowBuilder().addComponents(infoMenu);
 
       const buttonRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("open_sorun_modal")
-          .setLabel("Sorunlarımı İletmek İstiyorum")
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji("⛔"),
-        new ButtonBuilder()
-          .setCustomId("open_istek_modal")
-          .setLabel("İsteklerimi İletmek İstiyorum")
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji("☑️"),
-        new ButtonBuilder()
-          .setCustomId("open_yetkili_modal")
-          .setLabel("Yetkili Olmak İstiyorum")
-          .setStyle(ButtonStyle.Success)
-          .setEmoji("🛡️")
+        new ButtonBuilder().setCustomId("open_sorun_modal").setLabel("Sorunlarımı İletmek İstiyorum").setStyle(ButtonStyle.Danger).setEmoji("⛔"),
+        new ButtonBuilder().setCustomId("open_istek_modal").setLabel("İsteklerimi İletmek İstiyorum").setStyle(ButtonStyle.Secondary).setEmoji("☑️"),
+        new ButtonBuilder().setCustomId("open_yetkili_modal").setLabel("Yetkili Olmak İstiyorum").setStyle(ButtonStyle.Success).setEmoji("🛡️")
       );
 
       await interaction.channel.send({
@@ -354,7 +351,7 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({ content: "✅ Panel başarıyla gönderildi." });
     }
 
-    // Bilgi menüsü
+    // Menü
     if (interaction.isStringSelectMenu() && interaction.customId === "info_menu") {
       const v = interaction.values[0];
 
@@ -381,9 +378,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .map(role => role.toString());
 
         return interaction.reply({
-          content: roles.length
-            ? `🎭 Üzerindeki roller:\n${roles.join(", ")}`
-            : "Üzerinde herhangi bir rol bulunmuyor.",
+          content: roles.length ? `🎭 Üzerindeki roller:\n${roles.join(", ")}` : "Üzerinde herhangi bir rol bulunmuyor.",
           ephemeral: true
         });
       }
@@ -395,11 +390,30 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      // YENİ: İsim güncelleme modalı
       if (v === "isim_guncelleme") {
-        return interaction.reply({
-          content: "✏️ İsim güncelleme için yetkililere ulaşabilirsiniz.",
-          ephemeral: true
-        });
+        const remain = getRemainingCooldown(interaction.user.id, "isim");
+        if (remain > 0) {
+          return interaction.reply({
+            content: `❌ Yeni isim talebi göndermek için tekrar beklemelisin: **${formatDuration(remain)}**`,
+            ephemeral: true
+          });
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId("modal_rename")
+          .setTitle("İsim Güncelleme Talebi");
+
+        const input = new TextInputBuilder()
+          .setCustomId("rename_text")
+          .setLabel("İstediğiniz kullanıcı adı nedir?")
+          .setPlaceholder("Örn: Mina / Minâ / Mina. / Minâ ♡")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(32);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
+        return interaction.showModal(modal);
       }
     }
 
@@ -414,10 +428,7 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const modal = new ModalBuilder()
-          .setCustomId("modal_sorun")
-          .setTitle("Sorunları İlet");
-
+        const modal = new ModalBuilder().setCustomId("modal_sorun").setTitle("Sorunları İlet");
         const input = new TextInputBuilder()
           .setCustomId("sorun_text")
           .setLabel("Sorunu anlatır mısınız?")
@@ -439,10 +450,7 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const modal = new ModalBuilder()
-          .setCustomId("modal_istek")
-          .setTitle("İstek & Öneri Formu");
-
+        const modal = new ModalBuilder().setCustomId("modal_istek").setTitle("İstek & Öneri Formu");
         const input = new TextInputBuilder()
           .setCustomId("istek_text")
           .setLabel("İstek veya öneriniz nedir?")
@@ -471,7 +479,6 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        // 14) Zaten yetkiliyse başvuru engeli
         if (hasBlockedApplicationRole(interaction.member)) {
           return interaction.reply({
             content: "❌ Zaten yetkili sürecinde veya yetkili rollerinden birine sahipsin. Yeni başvuru yapamazsın.",
@@ -479,7 +486,6 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        // 15) Hesap yaşı şartı
         if (!getAccountAgeOk(interaction.user)) {
           return interaction.reply({
             content: `❌ Yetkili başvurusu için hesabının en az **${MIN_ACCOUNT_AGE_DAYS} gün** eski olması gerekiyor.`,
@@ -487,7 +493,6 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        // Sunucuda 48 saat şartı
         if (!getGuildTimeOk(interaction.member)) {
           return interaction.reply({
             content: `❌ Yetkili başvurusu için sunucuda en az **${MIN_GUILD_HOURS} saat** bulunman gerekiyor.`,
@@ -495,57 +500,13 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const modal = new ModalBuilder()
-          .setCustomId("modal_yetkili")
-          .setTitle("Yetkili Başvuru Formu");
+        const modal = new ModalBuilder().setCustomId("modal_yetkili").setTitle("Yetkili Başvuru Formu");
 
-        const adyas = new TextInputBuilder()
-          .setCustomId("ad_yas")
-          .setLabel("İsminiz ve yaşınız?")
-          .setPlaceholder("Örn: Ahmet 20")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(100);
-
-        const referans = new TextInputBuilder()
-          .setCustomId("referans")
-          .setLabel("Referans")
-          .setPlaceholder("Örn: @rizeli / ID")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(100);
-
-        const onceYetkili = new TextInputBuilder()
-          .setCustomId("once_yetkili")
-          .setLabel("Daha önce yetkilik yaptınız mı?")
-          .setPlaceholder('Örn: Evet yaptım, "xxx" sunucusunda yönetimdeydim')
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(500);
-
-        const neYaparsin = new TextInputBuilder()
-          .setCustomId("ne_yaparsin")
-          .setLabel("Ne yapabilirsiniz?")
-          .setPlaceholder("Örn: Chat aktifliği, üye ilgisi, rapor takibi...")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(500);
-
-        const aktiflik = new TextInputBuilder()
-          .setCustomId("aktiflik")
-          .setLabel("Günlük ortalama aktifliğiniz?")
-          .setPlaceholder("Örn: Günde 4-5 saat aktif olabilirim")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(100);
-
-        const hakkinda = new TextInputBuilder()
-          .setCustomId("hakkinda")
-          .setLabel("Kendinizden biraz bahsedin")
-          .setPlaceholder("Kısa ama açıklayıcı şekilde kendinizi anlatın.")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(500);
+        const adyas = new TextInputBuilder().setCustomId("ad_yas").setLabel("İsminiz ve yaşınız?").setPlaceholder("Örn: Ahmet 20").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100);
+        const referans = new TextInputBuilder().setCustomId("referans").setLabel("Referans").setPlaceholder("Örn: @rizeli / ID").setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100);
+        const onceYetkili = new TextInputBuilder().setCustomId("once_yetkili").setLabel("Daha önce yetkilik yaptınız mı?").setPlaceholder('Örn: Evet yaptım, "xxx" sunucusunda yönetimdeydim').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500);
+        const neYaparsin = new TextInputBuilder().setCustomId("ne_yaparsin").setLabel("Ne yapabilirsiniz?").setPlaceholder("Örn: Chat aktifliği, üye ilgisi, rapor takibi...").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500);
+        const aktiflik = new TextInputBuilder().setCustomId("aktiflik").setLabel("Günlük ortalama aktifliğiniz?").setPlaceholder("Örn: Günde 4-5 saat aktif olabilirim").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100);
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(adyas),
@@ -555,7 +516,6 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(aktiflik)
         );
 
-        // 5 input sınırı olduğu için hakkinda yerine aktiflik aldık; istersen yer değiştiririz.
         return interaction.showModal(modal);
       }
 
@@ -584,17 +544,10 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("done_support")
-            .setLabel("Okundu")
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(true)
+          new ButtonBuilder().setCustomId("done_support").setLabel("Okundu").setStyle(ButtonStyle.Success).setDisabled(true)
         );
 
-        return interaction.update({
-          embeds: [updatedEmbed],
-          components: [disabledRow]
-        });
+        return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
       }
 
       if (interaction.customId.startsWith("support_read_istek_")) {
@@ -622,17 +575,10 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("done_support")
-            .setLabel("Okundu")
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(true)
+          new ButtonBuilder().setCustomId("done_support").setLabel("Okundu").setStyle(ButtonStyle.Success).setDisabled(true)
         );
 
-        return interaction.update({
-          embeds: [updatedEmbed],
-          components: [disabledRow]
-        });
+        return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
       }
 
       if (interaction.customId.startsWith("app_accept_")) {
@@ -681,25 +627,13 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("accepted_done")
-            .setLabel("Onaylandı")
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(true),
-          new ButtonBuilder()
-            .setCustomId("rejected_done")
-            .setLabel("Reddedildi")
-            .setStyle(ButtonStyle.Danger)
-            .setDisabled(true)
+          new ButtonBuilder().setCustomId("accepted_done").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
+          new ButtonBuilder().setCustomId("rejected_done").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
         );
 
-        return interaction.update({
-          embeds: [updatedEmbed],
-          components: [disabledRow]
-        });
+        return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
       }
 
-      // 1 + "reddettikten sonra biz yazabilelim": modal aç
       if (interaction.customId.startsWith("app_reject_")) {
         if (!hasApplicationReviewPermission(interaction.member)) {
           return interaction.reply({
@@ -709,11 +643,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const userId = interaction.customId.split("_")[2];
-
-        const modal = new ModalBuilder()
-          .setCustomId(`reject_modal_${userId}`)
-          .setTitle("Başvuru Red Sebebi");
-
+        const modal = new ModalBuilder().setCustomId(`reject_modal_${userId}`).setTitle("Başvuru Red Sebebi");
         const input = new TextInputBuilder()
           .setCustomId("reject_reason_text")
           .setLabel("Red sebebini yazınız")
@@ -725,9 +655,84 @@ client.on(Events.InteractionCreate, async interaction => {
         modal.addComponents(new ActionRowBuilder().addComponents(input));
         return interaction.showModal(modal);
       }
+
+      // YENİ: İsim talebi onay
+      if (interaction.customId.startsWith("rename_accept_")) {
+        if (!hasSupportReviewPermission(interaction.member)) {
+          return interaction.reply({
+            content: "❌ Bu isim talebini sadece ilgili yetkili değerlendirebilir.",
+            ephemeral: true
+          });
+        }
+
+        const userId = interaction.customId.split("_")[2];
+        const requestedName = decodeURIComponent(interaction.customId.split("_").slice(3).join("_"));
+
+        const targetUser = await client.users.fetch(userId).catch(() => null);
+        const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
+
+        let nameStatus = "⚠️ İsim değiştirilemedi.";
+        if (targetMember) {
+          try {
+            await targetMember.setNickname(requestedName);
+            nameStatus = `✅ İsim başarıyla değiştirildi: **${requestedName}**`;
+          } catch (err) {
+            console.error("[İSİM DEĞİŞTİRME HATASI]", err);
+            nameStatus = "❌ İsim değiştirilemedi. Bot yetkisini ve rol sırasını kontrol et.";
+          }
+        }
+
+        let dmStatus = "⚠️ DM gönderilemedi.";
+        if (targetUser) {
+          const sent = await sendSafeDM(targetUser, prettyRenameAcceptDM(targetUser.username, requestedName));
+          dmStatus = sent ? "✅ DM gönderildi." : "❌ DM gönderilemedi.";
+        }
+
+        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor("Green")
+          .addFields(
+            { name: "Durum", value: `✅ Onaylandı - ${interaction.user.tag}` },
+            { name: "İsim Durumu", value: nameStatus },
+            { name: "DM Durumu", value: dmStatus }
+          );
+
+        const disabledRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("rename_done_ok").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
+          new ButtonBuilder().setCustomId("rename_done_no").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
+        );
+
+        return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
+      }
+
+      // YENİ: İsim talebi red -> modal
+      if (interaction.customId.startsWith("rename_reject_")) {
+        if (!hasSupportReviewPermission(interaction.member)) {
+          return interaction.reply({
+            content: "❌ Bu isim talebini sadece ilgili yetkili değerlendirebilir.",
+            ephemeral: true
+          });
+        }
+
+        const userId = interaction.customId.split("_")[2];
+
+        const modal = new ModalBuilder()
+          .setCustomId(`rename_reject_modal_${userId}`)
+          .setTitle("İsim Talebi Red Sebebi");
+
+        const input = new TextInputBuilder()
+          .setCustomId("rename_reject_reason")
+          .setLabel("Red sebebini yazınız")
+          .setPlaceholder("Örn: İsim sunucu kurallarına uygun değil.")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
+        return interaction.showModal(modal);
+      }
     }
 
-    // Modal gönderimleri
+    // Modal submit
     if (interaction.isModalSubmit()) {
       if (interaction.customId === "modal_sorun") {
         await interaction.deferReply({ ephemeral: true });
@@ -747,11 +752,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`support_read_sorun_${interaction.user.id}`)
-            .setLabel("Okudum")
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("✅")
+          new ButtonBuilder().setCustomId(`support_read_sorun_${interaction.user.id}`).setLabel("Okudum").setStyle(ButtonStyle.Success).setEmoji("✅")
         );
 
         await channel.send({ embeds: [embed], components: [row] });
@@ -778,11 +779,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`support_read_istek_${interaction.user.id}`)
-            .setLabel("Okudum")
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("✅")
+          new ButtonBuilder().setCustomId(`support_read_istek_${interaction.user.id}`).setLabel("Okudum").setStyle(ButtonStyle.Success).setEmoji("✅")
         );
 
         await channel.send({ embeds: [embed], components: [row] });
@@ -807,9 +804,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const aktiflik = interaction.fields.getTextInputValue("aktiflik");
 
         const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
-        if (!applicationChannel) {
-          return interaction.editReply({ content: "❌ Başvuru kanalı bulunamadı." });
-        }
+        if (!applicationChannel) return interaction.editReply({ content: "❌ Başvuru kanalı bulunamadı." });
 
         const appId = nextCounter("application");
 
@@ -833,23 +828,11 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Başvuran ID: ${interaction.user.id}` });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`app_accept_${interaction.user.id}`)
-            .setLabel("Onayla")
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("✅"),
-          new ButtonBuilder()
-            .setCustomId(`app_reject_${interaction.user.id}`)
-            .setLabel("Reddet")
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji("❌")
+          new ButtonBuilder().setCustomId(`app_accept_${interaction.user.id}`).setLabel("Onayla").setStyle(ButtonStyle.Success).setEmoji("✅"),
+          new ButtonBuilder().setCustomId(`app_reject_${interaction.user.id}`).setLabel("Reddet").setStyle(ButtonStyle.Danger).setEmoji("❌")
         );
 
-        const sentMessage = await applicationChannel.send({
-          embeds: [appEmbed],
-          components: [row]
-        });
-
+        const sentMessage = await applicationChannel.send({ embeds: [appEmbed], components: [row] });
         storage.pendingApplications[interaction.user.id] = sentMessage.id;
         saveData(storage);
         setCooldown(interaction.user.id, "basvuru");
@@ -859,7 +842,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // 1) Özel red sebebi modalı
       if (interaction.customId.startsWith("reject_modal_")) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -899,22 +881,11 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
 
               const disabledRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId("accepted_done")
-                  .setLabel("Onaylandı")
-                  .setStyle(ButtonStyle.Success)
-                  .setDisabled(true),
-                new ButtonBuilder()
-                  .setCustomId("rejected_done")
-                  .setLabel("Reddedildi")
-                  .setStyle(ButtonStyle.Danger)
-                  .setDisabled(true)
+                new ButtonBuilder().setCustomId("accepted_done").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
+                new ButtonBuilder().setCustomId("rejected_done").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
               );
 
-              await targetMessage.edit({
-                embeds: [updatedEmbed],
-                components: [disabledRow]
-              });
+              await targetMessage.edit({ embeds: [updatedEmbed], components: [disabledRow] });
             }
           } catch (e) {
             console.error("[RED GÜNCELLEME HATASI]", e);
@@ -926,6 +897,115 @@ client.on(Events.InteractionCreate, async interaction => {
 
         return interaction.editReply({
           content: `✅ Başvuru reddedildi.\n**Sebep:** ${reasonLabel}\n**DM:** ${dmStatus}`
+        });
+      }
+
+      // YENİ: İsim değiştirme talebi
+      if (interaction.customId === "modal_rename") {
+        await interaction.deferReply({ ephemeral: true });
+
+        const requestedName = interaction.fields.getTextInputValue("rename_text").trim();
+        const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+
+        if (!channel) {
+          return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
+        }
+
+        const id = nextCounter("rename");
+
+        const embed = new EmbedBuilder()
+          .setColor("#2b2d31")
+          .setTitle(`✏️ Yeni İsim Talebi #${id}`)
+          .addFields(
+            { name: "Kullanıcı", value: `${interaction.user} (${interaction.user.tag})` },
+            { name: "İstenen İsim", value: requestedName }
+          )
+          .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
+
+        const encodedName = encodeURIComponent(requestedName);
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`rename_accept_${interaction.user.id}_${encodedName}`)
+            .setLabel("Onayla")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅"),
+          new ButtonBuilder()
+            .setCustomId(`rename_reject_${interaction.user.id}`)
+            .setLabel("Reddet")
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("❌")
+        );
+
+        await channel.send({
+          embeds: [embed],
+          components: [row]
+        });
+
+        setCooldown(interaction.user.id, "isim");
+
+        return interaction.editReply({
+          content: "✅ İsim güncelleme talebin yetkili ekibe iletildi."
+        });
+      }
+
+      // YENİ: İsim talebi red sebebi
+      if (interaction.customId.startsWith("rename_reject_modal_")) {
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!hasSupportReviewPermission(interaction.member)) {
+          return interaction.editReply({ content: "❌ Bunu kullanma yetkin yok." });
+        }
+
+        const userId = interaction.customId.split("_")[3];
+        const reason = interaction.fields.getTextInputValue("rename_reject_reason");
+        const targetUser = await client.users.fetch(userId).catch(() => null);
+
+        let dmStatus = "⚠️ DM gönderilemedi.";
+        if (targetUser) {
+          const sent = await sendSafeDM(targetUser, prettyRenameRejectDM(targetUser.username, reason));
+          dmStatus = sent ? "✅ DM gönderildi." : "❌ DM gönderilemedi.";
+        }
+
+        const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+        if (applicationChannel?.isTextBased()) {
+          try {
+            const messages = await applicationChannel.messages.fetch({ limit: 50 });
+            const targetMessage = messages.find(
+              m =>
+                m.author.id === client.user.id &&
+                m.embeds?.[0] &&
+                m.embeds[0].footer?.text?.includes(`Kullanıcı ID: ${userId}`) &&
+                m.embeds[0].title?.includes("İsim Talebi") &&
+                m.components?.length
+            );
+
+            if (targetMessage) {
+              const updatedEmbed = EmbedBuilder.from(targetMessage.embeds[0])
+                .setColor("Red")
+                .addFields(
+                  { name: "Durum", value: `❌ Reddedildi - ${interaction.user.tag}` },
+                  { name: "Red Sebebi", value: reason },
+                  { name: "DM Durumu", value: dmStatus }
+                );
+
+              const disabledRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId("rename_done_ok").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
+                new ButtonBuilder().setCustomId("rename_done_no").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
+              );
+
+              await targetMessage.edit({
+                embeds: [updatedEmbed],
+                components: [disabledRow]
+              });
+            }
+          } catch (err) {
+            console.error("[İSİM RED GÜNCELLEME HATASI]", err);
+          }
+        }
+
+        return interaction.editReply({
+          content: `✅ İsim talebi reddedildi.\n**Sebep:** ${reason}\n**DM:** ${dmStatus}`
         });
       }
     }
