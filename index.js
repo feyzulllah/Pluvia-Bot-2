@@ -104,6 +104,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildInvites
+    GatewayIntentBits.GuildPresences
   ]
 });
 
