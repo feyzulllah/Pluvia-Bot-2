@@ -38,6 +38,8 @@ const PANEL_ALLOWED_ROLES = [
   "1465097885635842304"
 ];
 
+const APPLICATION_REVIEW_ROLE_ID = "1481490846049239241";
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
@@ -64,6 +66,10 @@ async function registerCommands() {
 
 function hasPanelPermission(member) {
   return PANEL_ALLOWED_ROLES.some(roleId => member.roles.cache.has(roleId));
+}
+
+function hasApplicationReviewPermission(member) {
+  return member.roles.cache.has(APPLICATION_REVIEW_ROLE_ID);
 }
 
 function hasOpenTicket(guild, userId) {
@@ -435,9 +441,9 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.customId.startsWith("app_accept_")) {
-        if (!interaction.member.roles.cache.has(process.env.STAFF_ROLE_ID)) {
+        if (!hasApplicationReviewPermission(interaction.member)) {
           return interaction.reply({
-            content: "❌ Bunu sadece yetkililer kullanabilir.",
+            content: "❌ Bu başvuruyu sadece yetkili değerlendirme ekibi onaylayabilir.",
             ephemeral: true
           });
         }
@@ -455,8 +461,9 @@ client.on(Events.InteractionCreate, async interaction => {
               `Sunucuda **stajyer** olarak göreve başlayacaksın.\n\n` +
               `**İlk görevlerin:**\n` +
               `• Sunucuya yeni gelen üyelere hoş geldin demek\n` +
-              `• Chat aktifliğine katkı sağlamak\n` +
-              `• Yetkililerle uyumlu şekilde çalışmak\n` +
+              `• Chat aktifliğini desteklemek\n` +
+              `• Yardıma ihtiyacı olan üyelerle ilgilenmek\n` +
+              `• Yetkili ekibiyle uyumlu çalışmak\n` +
               `• Kurallara uygun davranmak\n\n` +
               `Aramıza hoş geldin, başarılar dileriz. 💜`
             );
@@ -488,9 +495,9 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.customId.startsWith("app_reject_")) {
-        if (!interaction.member.roles.cache.has(process.env.STAFF_ROLE_ID)) {
+        if (!hasApplicationReviewPermission(interaction.member)) {
           return interaction.reply({
-            content: "❌ Bunu sadece yetkililer kullanabilir.",
+            content: "❌ Bu başvuruyu sadece yetkili değerlendirme ekibi reddedebilir.",
             ephemeral: true
           });
         }
