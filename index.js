@@ -39,6 +39,11 @@ const PANEL_ALLOWED_ROLES = [
 const APPLICATION_REVIEW_ROLE_ID = "1481490846049239241";
 const SUPPORT_REVIEW_ROLE_ID = "1472774718250549399";
 
+const APPROVED_ROLE_IDS = [
+  "1481475983348334632",
+  "1472747874650558624"
+];
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
@@ -330,7 +335,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .setDescription(
               `Merhaba **${targetUser.username}**,\n\n` +
               `Göndermiş olduğun **sorun bildirimi** ekibimiz tarafından görüntülendi.\n` +
-              `Konun değerlendirmeye alınmıştır.\n\n` +
+              `Bildirimin değerlendirme sürecine alınmıştır.\n\n` +
               `Lütfen biraz sabırlı ol, en kısa sürede inceleme sağlanacaktır. 💜`
             );
 
@@ -408,6 +413,19 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const userId = interaction.customId.split("_")[2];
         const targetUser = await client.users.fetch(userId).catch(() => null);
+        const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
+
+        let roleStatus = "⚠️ Roller verilemedi.";
+
+        if (targetMember) {
+          try {
+            await targetMember.roles.add(APPROVED_ROLE_IDS);
+            roleStatus = "✅ Roller başarıyla verildi.";
+          } catch (err) {
+            console.error("[ROL VERME HATASI]", err);
+            roleStatus = "❌ Roller verilemedi. Bot yetkisini ve rol sırasını kontrol et.";
+          }
+        }
 
         if (targetUser) {
           const acceptEmbed = new EmbedBuilder()
@@ -431,7 +449,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
           .setColor("Green")
-          .addFields({ name: "Durum", value: `✅ Kabul edildi - ${interaction.user.tag}` });
+          .addFields(
+            { name: "Durum", value: `✅ Kabul edildi - ${interaction.user.tag}` },
+            { name: "Rol Durumu", value: roleStatus }
+          );
 
         const disabledRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
