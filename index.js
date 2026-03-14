@@ -357,6 +357,7 @@ function ensureUserStats(userId) {
     saveData(storage);
   }
 }
+
 const inviteCache = new Map();
 
 async function cacheInvites() {
@@ -375,6 +376,7 @@ async function cacheInvites() {
     console.error("[DAVET CACHE HATASI]", error);
   }
 }
+
 client.once(Events.ClientReady, async () => {
   console.log(`[BOT] ${client.user.tag} aktif`);
   await registerCommands();
@@ -385,10 +387,10 @@ client.on("messageCreate", async message => {
   try {
     if (!message.guild || message.author.bot) return;
 
-   ensureUserStats(message.author.id);
-storage.stats[message.author.id].weeklyMessages += 1;
-storage.stats[message.author.id].totalMessages += 1;
-saveData(storage);
+    ensureUserStats(message.author.id);
+    storage.stats[message.author.id].weeklyMessages += 1;
+    storage.stats[message.author.id].totalMessages += 1;
+    saveData(storage);
 
     if (storage.afk[message.author.id]) {
       delete storage.afk[message.author.id];
@@ -540,44 +542,51 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (v === "davet_bilgisi") {
-  const userInviteData = storage.invites?.[interaction.user.id] || {
-    total: 0,
-    daily: 0,
-    weekly: 0,
-    monthly: 0,
-    invitedUsers: []
-  };
+        const userInviteData = storage.invites?.[interaction.user.id] || {
+          total: 0,
+          daily: 0,
+          weekly: 0,
+          monthly: 0,
+          invitedUsers: []
+        };
 
-  const invitedList = userInviteData.invitedUsers.length
-    ? userInviteData.invitedUsers
-        .slice(0, 10)
-        .map((name, index) => `• ${index + 1}. ${name}`)
-        .join("\n")
-    : "Bulunamadı";
+        const invitedList = userInviteData.invitedUsers.length
+          ? userInviteData.invitedUsers
+              .slice(0, 10)
+              .map((name, index) => `• ${index + 1}. ${name}`)
+              .join("\n")
+          : "Bulunamadı";
 
-  return interaction.reply({
-    content: [
-      "📨 Aşağıda davet bilgilerin detaylı bir şekilde listelendirilmiştir:",
-      "",
-      `• Toplam Davetler: **${userInviteData.total || 0}**`,
-      `• Günlük Davetler: **${userInviteData.daily || 0}**`,
-      `• Haftalık Davetler: **${userInviteData.weekly || 0}**`,
-      `• Aylık Davetler: **${userInviteData.monthly || 0}**`,
-      "",
-      "➥ Davet edilen bazı kullanıcılar:",
-      invitedList,
-      "",
-      `🔗 Sınırsız davet bağlantısı: ${INVITE_LINK}`
-    ].join("\n"),
-    ephemeral: true
-  });
-}
+        return interaction.reply({
+          content: [
+            "📨 Aşağıda davet bilgilerin detaylı bir şekilde listelendirilmiştir:",
+            "",
+            `• Toplam Davetler: **${userInviteData.total || 0}**`,
+            `• Günlük Davetler: **${userInviteData.daily || 0}**`,
+            `• Haftalık Davetler: **${userInviteData.weekly || 0}**`,
+            `• Aylık Davetler: **${userInviteData.monthly || 0}**`,
+            "",
+            "➥ Davet edilen bazı kullanıcılar:",
+            invitedList,
+            "",
+            `🔗 Sınırsız davet bağlantısı: ${INVITE_LINK}`
+          ].join("\n"),
+          ephemeral: true
+        });
+      }
 
       if (v === "sunucu_bilgisi") {
         const totalMembers = interaction.guild.memberCount;
-        const onlineMembers = interaction.guild.members.cache.filter(
-          m => m.presence && m.presence.status !== "offline"
-        ).size;
+
+        let onlineMembers = 0;
+        try {
+          const fetchedMembers = await interaction.guild.members.fetch();
+          onlineMembers = fetchedMembers.filter(
+            m => m.presence && m.presence.status !== "offline"
+          ).size;
+        } catch {
+          onlineMembers = 0;
+        }
 
         return interaction.reply({
           content: [
@@ -594,12 +603,21 @@ client.on(Events.InteractionCreate, async interaction => {
         ensureUserStats(interaction.user.id);
         const userStats = storage.stats[interaction.user.id];
 
+        const weeklyHours = Math.floor((userStats.weeklyVoiceMinutes || 0) / 60);
+        const weeklyMinutes = (userStats.weeklyVoiceMinutes || 0) % 60;
+
+        const totalHours = Math.floor((userStats.totalVoiceMinutes || 0) / 60);
+        const totalMinutes = (userStats.totalVoiceMinutes || 0) % 60;
+
         return interaction.reply({
           content: [
             `📊 Merhaba! ${interaction.user}`,
             "",
-            `Haftalık toplamda **${Math.floor((userStats.weeklyVoiceMinutes || 0) / 60)} saat ${(userStats.weeklyVoiceMinutes || 0) % 60} dakika** boyunca zaman geçirmişsin.`,
-            `Haftalık toplamda **${userStats.weeklyMessages || 0}** mesaj göndermişsin.`
+            `Haftalık toplamda **${weeklyHours} saat ${weeklyMinutes} dakika** boyunca zaman geçirmişsin.`,
+            `Haftalık toplamda **${userStats.weeklyMessages || 0}** mesaj göndermişsin.`,
+            "",
+            `Toplamda **${totalHours} saat ${totalMinutes} dakika** sesli aktiviten bulunuyor.`,
+            `Toplamda **${userStats.totalMessages || 0}** mesaj göndermişsin.`
           ].join("\n"),
           ephemeral: true
         });
@@ -1328,6 +1346,7 @@ client.on(Events.InteractionCreate, async interaction => {
     } catch {}
   }
 });
+
 client.on("guildMemberAdd", async member => {
   try {
     const guild = member.guild;
@@ -1354,54 +1373,54 @@ client.on("guildMemberAdd", async member => {
 
     const inviterId = usedInvite.inviter.id;
 
-  const now = new Date();
-const currentDay = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-const currentWeek = `${now.getFullYear()}-W${Math.ceil(now.getDate() / 7)}`;
-const currentMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
+    const now = new Date();
+    const currentDay = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    const currentWeek = `${now.getFullYear()}-W${Math.ceil(now.getDate() / 7)}`;
+    const currentMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
 
-if (!storage.invites[inviterId]) {
-  storage.invites[inviterId] = {
-    total: 0,
-    daily: 0,
-    weekly: 0,
-    monthly: 0,
-    invitedUsers: [],
-    lastDay: currentDay,
-    lastWeek: currentWeek,
-    lastMonth: currentMonth
-  };
-}
+    if (!storage.invites[inviterId]) {
+      storage.invites[inviterId] = {
+        total: 0,
+        daily: 0,
+        weekly: 0,
+        monthly: 0,
+        invitedUsers: [],
+        lastDay: currentDay,
+        lastWeek: currentWeek,
+        lastMonth: currentMonth
+      };
+    }
 
-if (storage.invites[inviterId].lastDay !== currentDay) {
-  storage.invites[inviterId].daily = 0;
-  storage.invites[inviterId].lastDay = currentDay;
-}
+    if (storage.invites[inviterId].lastDay !== currentDay) {
+      storage.invites[inviterId].daily = 0;
+      storage.invites[inviterId].lastDay = currentDay;
+    }
 
-if (storage.invites[inviterId].lastWeek !== currentWeek) {
-  storage.invites[inviterId].weekly = 0;
-  storage.invites[inviterId].lastWeek = currentWeek;
-}
+    if (storage.invites[inviterId].lastWeek !== currentWeek) {
+      storage.invites[inviterId].weekly = 0;
+      storage.invites[inviterId].lastWeek = currentWeek;
+    }
 
-if (storage.invites[inviterId].lastMonth !== currentMonth) {
-  storage.invites[inviterId].monthly = 0;
-  storage.invites[inviterId].lastMonth = currentMonth;
-}
+    if (storage.invites[inviterId].lastMonth !== currentMonth) {
+      storage.invites[inviterId].monthly = 0;
+      storage.invites[inviterId].lastMonth = currentMonth;
+    }
 
-storage.invites[inviterId].total += 1;
-storage.invites[inviterId].daily += 1;
-storage.invites[inviterId].weekly += 1;
-storage.invites[inviterId].monthly += 1;
+    storage.invites[inviterId].total += 1;
+    storage.invites[inviterId].daily += 1;
+    storage.invites[inviterId].weekly += 1;
+    storage.invites[inviterId].monthly += 1;
 
     const invitedName = member.user.username;
     if (!storage.invites[inviterId].invitedUsers.includes(invitedName)) {
       storage.invites[inviterId].invitedUsers.push(invitedName);
     }
 
-   saveData(storage);
-console.log(`[DAVET] ${usedInvite.inviter.tag} -> ${member.user.tag}`);
-} catch (error) {
-  console.error("[DAVET TAKIP HATASI]", error);
-}
+    saveData(storage);
+    console.log(`[DAVET] ${usedInvite.inviter.tag} -> ${member.user.tag}`);
+  } catch (error) {
+    console.error("[DAVET TAKIP HATASI]", error);
+  }
 });
 
 client.on("voiceStateUpdate", (oldState, newState) => {
@@ -1412,14 +1431,12 @@ client.on("voiceStateUpdate", (oldState, newState) => {
     const oldChannel = oldState.channelId;
     const newChannel = newState.channelId;
 
-    // Ses kanalına giriş
     if (!oldChannel && newChannel) {
       storage.stats[userId].voiceJoinAt = Date.now();
       saveData(storage);
       return;
     }
 
-    // Ses kanalından çıkış
     if (oldChannel && !newChannel) {
       const joinAt = storage.stats[userId].voiceJoinAt;
       if (joinAt) {
@@ -1437,7 +1454,6 @@ client.on("voiceStateUpdate", (oldState, newState) => {
       return;
     }
 
-    // Kanaldan kanala geçiş
     if (oldChannel && newChannel && oldChannel !== newChannel) {
       const joinAt = storage.stats[userId].voiceJoinAt;
       if (joinAt) {
@@ -1456,6 +1472,6 @@ client.on("voiceStateUpdate", (oldState, newState) => {
   } catch (error) {
     console.error("[VOICE STAT HATASI]", error);
   }
-
 });
+
 client.login(process.env.TOKEN);
