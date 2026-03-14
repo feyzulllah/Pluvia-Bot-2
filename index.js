@@ -15,7 +15,6 @@ const {
   Client,
   GatewayIntentBits,
   PermissionsBitField,
-  ChannelType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -30,7 +29,6 @@ const {
   TextInputStyle
 } = require("discord.js");
 
-const { createTranscript } = require("discord-html-transcripts");
 require("dotenv").config();
 
 const PANEL_ALLOWED_ROLES = [
@@ -39,6 +37,7 @@ const PANEL_ALLOWED_ROLES = [
 ];
 
 const APPLICATION_REVIEW_ROLE_ID = "1481490846049239241";
+const SUPPORT_REVIEW_ROLE_ID = "1472774718250549399";
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
@@ -72,98 +71,14 @@ function hasApplicationReviewPermission(member) {
   return member.roles.cache.has(APPLICATION_REVIEW_ROLE_ID);
 }
 
-function hasOpenTicket(guild, userId) {
-  return guild.channels.cache.find(
-    ch =>
-      ch.parentId === process.env.CATEGORY_ID &&
-      ch.topic &&
-      ch.topic.includes(`owner:${userId}`)
-  );
+function hasSupportReviewPermission(member) {
+  return member.roles.cache.has(SUPPORT_REVIEW_ROLE_ID);
 }
 
-async function createTicketChannel(guild, user, type, contentText) {
-  const ticketCount =
-    guild.channels.cache.filter(ch => ch.parentId === process.env.CATEGORY_ID).size + 1;
-
-  const channel = await guild.channels.create({
-    name: `${type}-${ticketCount}`,
-    type: ChannelType.GuildText,
-    parent: process.env.CATEGORY_ID,
-    topic: `owner:${user.id} | type:${type}`,
-    permissionOverwrites: [
-      {
-        id: guild.id,
-        deny: [PermissionsBitField.Flags.ViewChannel]
-      },
-      {
-        id: user.id,
-        allow: [
-          PermissionsBitField.Flags.ViewChannel,
-          PermissionsBitField.Flags.SendMessages,
-          PermissionsBitField.Flags.ReadMessageHistory,
-          PermissionsBitField.Flags.AttachFiles,
-          PermissionsBitField.Flags.EmbedLinks
-        ]
-      },
-      {
-        id: process.env.STAFF_ROLE_ID,
-        allow: [
-          PermissionsBitField.Flags.ViewChannel,
-          PermissionsBitField.Flags.SendMessages,
-          PermissionsBitField.Flags.ReadMessageHistory,
-          PermissionsBitField.Flags.ManageChannels,
-          PermissionsBitField.Flags.AttachFiles,
-          PermissionsBitField.Flags.EmbedLinks
-        ]
-      }
-    ]
-  });
-
-  const titleMap = {
-    sorun: "⛔ Sorun Bildirimi",
-    istek: "☑️ İstek & Öneri",
-    yetkili: "🛡️ Yetkili Başvurusu"
-  };
-
-  const embed = new EmbedBuilder()
-    .setColor("#2b2d31")
-    .setTitle(titleMap[type] || "🎫 Ticket")
-    .setDescription(
-      `Merhaba ${user}, talebin başarıyla oluşturuldu.\n\n` +
-      `**İçerik:**\n${contentText}\n\n` +
-      `Yetkili ekip en kısa sürede seninle ilgilenecektir.`
-    );
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ticket_claim")
-      .setLabel("Üstlen")
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji("🙋"),
-    new ButtonBuilder()
-      .setCustomId("ticket_close")
-      .setLabel("Kapat")
-      .setStyle(ButtonStyle.Danger)
-      .setEmoji("🔒")
-  );
-
-  await channel.send({
-    content: `${user} <@&${process.env.STAFF_ROLE_ID}>`,
-    embeds: [embed],
-    components: [row]
-  });
-
-  return channel;
-}
-
-async function sendLog(guild, embed, files = []) {
+async function sendSafeDM(user, embed) {
   try {
-    const logChannel = guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
-    if (!logChannel) return;
-    await logChannel.send({ embeds: [embed], files });
-  } catch (err) {
-    console.error("[LOG HATASI]", err);
-  }
+    await user.send({ embeds: [embed] });
+  } catch {}
 }
 
 client.once(Events.ClientReady, async () => {
@@ -300,7 +215,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (interaction.values[0] === "isim_guncelleme") {
         return interaction.reply({
-          content: "✏️ İsim güncelleme için yetkililere ticket açabilirsiniz.",
+          content: "✏️ İsim güncelleme için yetkililere ulaşabilirsiniz.",
           ephemeral: true
         });
       }
@@ -308,14 +223,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.isButton()) {
       if (interaction.customId === "open_sorun_modal") {
-        const existing = hasOpenTicket(interaction.guild, interaction.user.id);
-        if (existing) {
-          return interaction.reply({
-            content: `❌ Zaten açık bir ticketın var: ${existing}`,
-            ephemeral: true
-          });
-        }
-
         const modal = new ModalBuilder()
           .setCustomId("modal_sorun")
           .setTitle("Sorunları İlet");
@@ -328,21 +235,11 @@ client.on(Events.InteractionCreate, async interaction => {
           .setRequired(true)
           .setMaxLength(1000);
 
-        const row = new ActionRowBuilder().addComponents(input);
-        modal.addComponents(row);
-
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
         return interaction.showModal(modal);
       }
 
       if (interaction.customId === "open_istek_modal") {
-        const existing = hasOpenTicket(interaction.guild, interaction.user.id);
-        if (existing) {
-          return interaction.reply({
-            content: `❌ Zaten açık bir ticketın var: ${existing}`,
-            ephemeral: true
-          });
-        }
-
         const modal = new ModalBuilder()
           .setCustomId("modal_istek")
           .setTitle("İstek & Öneri Formu");
@@ -355,9 +252,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setRequired(true)
           .setMaxLength(1000);
 
-        const row = new ActionRowBuilder().addComponents(input);
-        modal.addComponents(row);
-
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
         return interaction.showModal(modal);
       }
 
@@ -417,26 +312,89 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
-      if (interaction.customId === "ticket_claim") {
-        if (!interaction.member.roles.cache.has(process.env.STAFF_ROLE_ID)) {
+      if (interaction.customId.startsWith("support_read_sorun_")) {
+        if (!hasSupportReviewPermission(interaction.member)) {
           return interaction.reply({
-            content: "❌ Bu butonu sadece yetkililer kullanabilir.",
+            content: "❌ Bu bildirimi sadece ilgili destek yetkilisi değerlendirebilir.",
             ephemeral: true
           });
         }
 
-        const claimLog = new EmbedBuilder()
-          .setColor("Blue")
-          .setTitle("🙋 Ticket Üstlenildi")
-          .addFields(
-            { name: "Yetkili", value: `${interaction.user.tag}`, inline: true },
-            { name: "Kanal", value: `${interaction.channel}`, inline: true }
-          );
+        const userId = interaction.customId.split("_")[3];
+        const targetUser = await client.users.fetch(userId).catch(() => null);
 
-        await sendLog(interaction.guild, claimLog);
+        if (targetUser) {
+          const dmEmbed = new EmbedBuilder()
+            .setColor("Orange")
+            .setTitle("📩 Sorun Bildirimin Alındı")
+            .setDescription(
+              `Merhaba **${targetUser.username}**,\n\n` +
+              `Göndermiş olduğun **sorun bildirimi** ekibimiz tarafından görüntülendi.\n` +
+              `Konun değerlendirmeye alınmıştır.\n\n` +
+              `Lütfen biraz sabırlı ol, en kısa sürede inceleme sağlanacaktır. 💜`
+            );
 
-        return interaction.reply({
-          content: `✅ Ticket ${interaction.user} tarafından üstlenildi.`
+          await sendSafeDM(targetUser, dmEmbed);
+        }
+
+        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor("Orange")
+          .addFields({ name: "Durum", value: `📩 Okundu - ${interaction.user.tag}` });
+
+        const disabledRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("done_support")
+            .setLabel("Okundu")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true)
+        );
+
+        return interaction.update({
+          embeds: [updatedEmbed],
+          components: [disabledRow]
+        });
+      }
+
+      if (interaction.customId.startsWith("support_read_istek_")) {
+        if (!hasSupportReviewPermission(interaction.member)) {
+          return interaction.reply({
+            content: "❌ Bu bildirimi sadece ilgili destek yetkilisi değerlendirebilir.",
+            ephemeral: true
+          });
+        }
+
+        const userId = interaction.customId.split("_")[3];
+        const targetUser = await client.users.fetch(userId).catch(() => null);
+
+        if (targetUser) {
+          const dmEmbed = new EmbedBuilder()
+            .setColor("Blurple")
+            .setTitle("💡 İstek / Önerin Alındı")
+            .setDescription(
+              `Merhaba **${targetUser.username}**,\n\n` +
+              `Göndermiş olduğun **istek / öneri** ekibimiz tarafından görüntülendi.\n` +
+              `Geri bildirimin değerlendirme sürecine alınmıştır.\n\n` +
+              `Görüşün bizim için değerli, teşekkür ederiz. 💜`
+            );
+
+          await sendSafeDM(targetUser, dmEmbed);
+        }
+
+        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor("Blurple")
+          .addFields({ name: "Durum", value: `📩 Okundu - ${interaction.user.tag}` });
+
+        const disabledRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("done_support")
+            .setLabel("Okundu")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true)
+        );
+
+        return interaction.update({
+          embeds: [updatedEmbed],
+          components: [disabledRow]
         });
       }
 
@@ -454,21 +412,21 @@ client.on(Events.InteractionCreate, async interaction => {
         if (targetUser) {
           const acceptEmbed = new EmbedBuilder()
             .setColor("Green")
-            .setTitle("🎉 Yetkili Başvurun Kabul Edildi")
+            .setTitle("🎉 Başvurun Kabul Edildi")
             .setDescription(
               `Merhaba **${targetUser.username}**,\n\n` +
               `Pluvia yetkili başvurun olumlu sonuçlandı.\n` +
-              `Sunucuda **stajyer** olarak göreve başlayacaksın.\n\n` +
-              `**İlk görevlerin:**\n` +
+              `Sunucuda **Pluvia Yetkili Başlangıç** olarak göreve başlayacaksın.\n\n` +
+              `**Başlangıç görevlerin:**\n` +
               `• Sunucuya yeni gelen üyelere hoş geldin demek\n` +
               `• Chat aktifliğini desteklemek\n` +
-              `• Yardıma ihtiyacı olan üyelerle ilgilenmek\n` +
-              `• Yetkili ekibiyle uyumlu çalışmak\n` +
-              `• Kurallara uygun davranmak\n\n` +
+              `• Üyelerle düzgün ve saygılı iletişim kurmak\n` +
+              `• Yetkili ekibinin yönlendirmelerine uyum sağlamak\n` +
+              `• Kurallara dikkat ederek örnek bir görevli olmak\n\n` +
               `Aramıza hoş geldin, başarılar dileriz. 💜`
             );
 
-          await targetUser.send({ embeds: [acceptEmbed] }).catch(() => {});
+          await sendSafeDM(targetUser, acceptEmbed);
         }
 
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -508,16 +466,16 @@ client.on(Events.InteractionCreate, async interaction => {
         if (targetUser) {
           const rejectEmbed = new EmbedBuilder()
             .setColor("Red")
-            .setTitle("❌ Yetkili Başvurun Reddedildi")
+            .setTitle("❌ Başvurun Reddedildi")
             .setDescription(
               `Merhaba **${targetUser.username}**,\n\n` +
-              `Pluvia yetkili başvurun bu kez olumlu sonuçlanmadı.\n` +
-              `Lütfen moralini bozma.\n\n` +
-              `Kendini geliştirip ileride tekrar başvuru yapabilirsin.\n` +
-              `İlgin için teşekkür ederiz. 💜`
+              `Pluvia yetkili başvurun bu kez olumlu sonuçlanmadı.\n\n` +
+              `Lütfen moralini bozma.\n` +
+              `Kendini geliştirip ilerleyen süreçte tekrar başvuru yapabilirsin.\n\n` +
+              `İlgin ve emeğin için teşekkür ederiz. 💜`
             );
 
-          await targetUser.send({ embeds: [rejectEmbed] }).catch(() => {});
+          await sendSafeDM(targetUser, rejectEmbed);
         }
 
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -542,99 +500,84 @@ client.on(Events.InteractionCreate, async interaction => {
           components: [disabledRow]
         });
       }
-
-      if (interaction.customId === "ticket_close") {
-        await interaction.deferReply();
-
-        const isStaff = interaction.member.roles.cache.has(process.env.STAFF_ROLE_ID);
-        const isOwner = interaction.channel.topic?.includes(`owner:${interaction.user.id}`);
-
-        if (!isStaff && !isOwner) {
-          return interaction.editReply({
-            content: "❌ Bu ticketı kapatma yetkin yok."
-          });
-        }
-
-        await interaction.editReply({
-          content: "🔒 Ticket kapatılıyor, transcript hazırlanıyor..."
-        });
-
-        const attachment = await createTranscript(interaction.channel, {
-          limit: -1,
-          returnType: "attachment",
-          filename: `${interaction.channel.name}.html`
-        });
-
-        const closeLog = new EmbedBuilder()
-          .setColor("Red")
-          .setTitle("🔒 Ticket Kapatıldı")
-          .addFields(
-            { name: "Kanal", value: `${interaction.channel.name}`, inline: true },
-            { name: "Kapatan", value: `${interaction.user.tag}`, inline: true }
-          );
-
-        await sendLog(interaction.guild, closeLog, [attachment]);
-
-        setTimeout(async () => {
-          await interaction.channel.delete().catch(() => {});
-        }, 3000);
-      }
     }
 
     if (interaction.isModalSubmit()) {
       if (interaction.customId === "modal_sorun") {
         await interaction.deferReply({ ephemeral: true });
 
-        const existing = hasOpenTicket(interaction.guild, interaction.user.id);
-        if (existing) {
+        const sorun = interaction.fields.getTextInputValue("sorun_text");
+        const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+
+        if (!channel) {
           return interaction.editReply({
-            content: `❌ Zaten açık bir ticketın var: ${existing}`
+            content: "❌ Bildirim kanalı bulunamadı."
           });
         }
 
-        const sorun = interaction.fields.getTextInputValue("sorun_text");
-        const channel = await createTicketChannel(interaction.guild, interaction.user, "sorun", sorun);
-
-        const openLog = new EmbedBuilder()
+        const embed = new EmbedBuilder()
           .setColor("Red")
-          .setTitle("⛔ Sorun Ticketı Açıldı")
+          .setTitle("⛔ Yeni Sorun Bildirimi")
           .addFields(
-            { name: "Kullanıcı", value: interaction.user.tag, inline: true },
-            { name: "Kanal", value: `${channel}`, inline: true }
-          );
+            { name: "Kullanıcı", value: `${interaction.user} (${interaction.user.tag})` },
+            { name: "Sorun", value: sorun }
+          )
+          .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
-        await sendLog(interaction.guild, openLog);
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`support_read_sorun_${interaction.user.id}`)
+            .setLabel("Okudum")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅")
+        );
+
+        await channel.send({
+          embeds: [embed],
+          components: [row]
+        });
 
         return interaction.editReply({
-          content: `✅ Sorun bildirimin alındı: ${channel}`
+          content: "✅ Sorun bildirimin yetkili ekibe iletildi."
         });
       }
 
       if (interaction.customId === "modal_istek") {
         await interaction.deferReply({ ephemeral: true });
 
-        const existing = hasOpenTicket(interaction.guild, interaction.user.id);
-        if (existing) {
+        const istek = interaction.fields.getTextInputValue("istek_text");
+        const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+
+        if (!channel) {
           return interaction.editReply({
-            content: `❌ Zaten açık bir ticketın var: ${existing}`
+            content: "❌ Bildirim kanalı bulunamadı."
           });
         }
 
-        const istek = interaction.fields.getTextInputValue("istek_text");
-        const channel = await createTicketChannel(interaction.guild, interaction.user, "istek", istek);
-
-        const openLog = new EmbedBuilder()
+        const embed = new EmbedBuilder()
           .setColor("Blurple")
-          .setTitle("☑️ İstek Ticketı Açıldı")
+          .setTitle("☑️ Yeni İstek / Öneri")
           .addFields(
-            { name: "Kullanıcı", value: interaction.user.tag, inline: true },
-            { name: "Kanal", value: `${channel}`, inline: true }
-          );
+            { name: "Kullanıcı", value: `${interaction.user} (${interaction.user.tag})` },
+            { name: "İstek / Öneri", value: istek }
+          )
+          .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
-        await sendLog(interaction.guild, openLog);
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`support_read_istek_${interaction.user.id}`)
+            .setLabel("Okudum")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅")
+        );
+
+        await channel.send({
+          embeds: [embed],
+          components: [row]
+        });
 
         return interaction.editReply({
-          content: `✅ İstek / önerin alındı: ${channel}`
+          content: "✅ İstek / önerin yetkili ekibe iletildi."
         });
       }
 
@@ -651,7 +594,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!applicationChannel) {
           return interaction.editReply({
-            content: "❌ Başvuru kanalı bulunamadı. Yetkililere bildir."
+            content: "❌ Başvuru kanalı bulunamadı."
           });
         }
 
@@ -685,16 +628,6 @@ client.on(Events.InteractionCreate, async interaction => {
           embeds: [appEmbed],
           components: [row]
         });
-
-        const appLog = new EmbedBuilder()
-          .setColor("Green")
-          .setTitle("🛡️ Yetkili Başvurusu Gönderildi")
-          .addFields(
-            { name: "Kullanıcı", value: interaction.user.tag, inline: true },
-            { name: "Kanal", value: `<#${process.env.APPLICATION_CHANNEL_ID}>`, inline: true }
-          );
-
-        await sendLog(interaction.guild, appLog);
 
         return interaction.editReply({
           content: "✅ Yetkili başvurun başarıyla gönderildi. Sonuç sana DM üzerinden bildirilecektir."
