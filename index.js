@@ -5,6 +5,8 @@ const PORT = process.env.PORT || 3000;
 app.get("/", (req, res) => res.send("Bot aktif!"));
 app.listen(PORT, () => console.log(`[WEB] ${PORT} portunda aktif`));
 
+const fs = require("fs");
+const path = require("path");
 const {
   Client,
   GatewayIntentBits,
@@ -38,7 +40,64 @@ const APPROVED_ROLE_IDS = [
   "1472747874650558624"
 ];
 
+// Zaten yetkiliyse başvuru yapamasın diye kontrol edilecek roller
+const BLOCKED_APPLICATION_ROLE_IDS = [
+  "1481475983348334632",
+  "1472747874650558624",
+  "1481490846049239241"
+];
+
 const INVITE_LINK = "https://discord.gg/pluvia";
+
+const MIN_ACCOUNT_AGE_DAYS = 30;
+const MIN_GUILD_HOURS = 48;
+
+// 8) Cooldown sistemi
+const COOLDOWN_MS = {
+  sorun: 10 * 60 * 1000,
+  istek: 10 * 60 * 1000,
+  basvuru: 24 * 60 * 60 * 1000
+};
+
+const dataDir = path.join(__dirname, "data");
+const dataFile = path.join(dataDir, "storage.json");
+
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+if (!fs.existsSync(dataFile)) {
+  fs.writeFileSync(
+    dataFile,
+    JSON.stringify(
+      {
+        pendingApplications: {},
+        counters: {
+          application: 0,
+          support: 0
+        },
+        cooldowns: {}
+      },
+      null,
+      2
+    )
+  );
+}
+
+function loadData() {
+  try {
+    return JSON.parse(fs.readFileSync(dataFile, "utf8"));
+  } catch {
+    return {
+      pendingApplications: {},
+      counters: { application: 0, support: 0 },
+      cooldowns: {}
+    };
+  }
+}
+
+function saveData(data) {
+  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
+}
+
+let storage = loadData();
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
@@ -51,9 +110,6 @@ const commands = [
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
-// Bekleyen başvurular: userId -> messageId
-const pendingApplications = new Map();
 
 async function registerCommands() {
   try {
@@ -79,6 +135,36 @@ function hasSupportReviewPermission(member) {
   return member.roles.cache.has(SUPPORT_REVIEW_ROLE_ID);
 }
 
+function hasBlockedApplicationRole(member) {
+  return BLOCKED_APPLICATION_ROLE_IDS.some(roleId => member.roles.cache.has(roleId));
+}
+
+function getCooldownKey(userId, type) {
+  return `${userId}_${type}`;
+}
+
+function getRemainingCooldown(userId, type) {
+  const key = getCooldownKey(userId, type);
+  const last = storage.cooldowns[key];
+  if (!last) return 0;
+  const remain = COOLDOWN_MS[type] - (Date.now() - last);
+  return remain > 0 ? remain : 0;
+}
+
+function setCooldown(userId, type) {
+  const key = getCooldownKey(userId, type);
+  storage.cooldowns[key] = Date.now();
+  saveData(storage);
+}
+
+function formatDuration(ms) {
+  const totalSec = Math.ceil(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${h > 0 ? `${h}s ` : ""}${m > 0 ? `${m}dk ` : ""}${s}sn`;
+}
+
 async function sendSafeDM(user, embed) {
   try {
     await user.send({ embeds: [embed] });
@@ -102,7 +188,7 @@ function panelEmbed() {
         "Aşağıdaki menüyü kullanarak yapabileceğin işlemler bulunmaktadır."
       ].join("\n")
     )
-    .setFooter({ text: "Pluvia Destek Sistemi" });
+    .setFooter({ text: "Pluvia Destek & Başvuru Sistemi" });
 }
 
 function prettyAcceptDM(username) {
@@ -119,7 +205,7 @@ function prettyAcceptDM(username) {
         "**Başlangıç görevlerin:**",
         "• Sunucuya yeni gelen üyelere hoş geldin demek",
         "• Chat aktifliğini desteklemek",
-        "• Üyelerle saygılı ve düzgün iletişim kurmak",
+        "• Üyelere karşı saygılı ve düzgün iletişim kurmak",
         "• Yetkili ekibinin yönlendirmelerine uyum sağlamak",
         "• Kurallara dikkat ederek örnek bir görevli olmak",
         "",
@@ -139,7 +225,7 @@ function prettyRejectDM(username, reasonLabel) {
         "",
         "Pluvia yetkili başvurun bu kez olumlu sonuçlanmadı.",
         "",
-        `**Sebep:** ${reasonLabel}`,
+        `**Red Sebebi:** ${reasonLabel}`,
         "",
         "Lütfen moralini bozma.",
         "Kendini geliştirip ilerleyen süreçte tekrar başvuru yapabilirsin.",
@@ -166,10 +252,27 @@ function prettySupportDM(username, type) {
         "",
         isIssue
           ? "Lütfen biraz sabırlı ol, en kısa sürede inceleme sağlanacaktır. 💜"
-          : "Görüşün bizim için değerli, teşekkür ederiz. 💜"
+          : "Geri bildirimin bizim için değerli, teşekkür ederiz. 💜"
       ].join("\n")
     )
     .setFooter({ text: "Pluvia Destek Ekibi" });
+}
+
+function getAccountAgeOk(user) {
+  const ageMs = Date.now() - user.createdTimestamp;
+  return ageMs >= MIN_ACCOUNT_AGE_DAYS * 24 * 60 * 60 * 1000;
+}
+
+function getGuildTimeOk(member) {
+  if (!member.joinedTimestamp) return false;
+  const ageMs = Date.now() - member.joinedTimestamp;
+  return ageMs >= MIN_GUILD_HOURS * 60 * 60 * 1000;
+}
+
+function nextCounter(type) {
+  storage.counters[type] = (storage.counters[type] || 0) + 1;
+  saveData(storage);
+  return storage.counters[type];
 }
 
 client.once(Events.ClientReady, async () => {
@@ -256,19 +359,17 @@ client.on(Events.InteractionCreate, async interaction => {
       const v = interaction.values[0];
 
       if (v === "katilim_tarihi") {
-        const joined = interaction.member.joinedTimestamp;
         return interaction.reply({
-          content: joined
-            ? `📌 Sunucuya katılım tarihin: <t:${Math.floor(joined / 1000)}:F>`
+          content: interaction.member.joinedTimestamp
+            ? `📌 Sunucuya katılım tarihin: <t:${Math.floor(interaction.member.joinedTimestamp / 1000)}:F>`
             : "❌ Katılım tarihi bulunamadı.",
           ephemeral: true
         });
       }
 
       if (v === "hesap_tarihi") {
-        const created = interaction.user.createdTimestamp;
         return interaction.reply({
-          content: `📅 Hesabının oluşturulma tarihi: <t:${Math.floor(created / 1000)}:F>`,
+          content: `📅 Hesabının oluşturulma tarihi: <t:${Math.floor(interaction.user.createdTimestamp / 1000)}:F>`,
           ephemeral: true
         });
       }
@@ -304,8 +405,15 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // Butonlar
     if (interaction.isButton()) {
-      // Formları aç
       if (interaction.customId === "open_sorun_modal") {
+        const remain = getRemainingCooldown(interaction.user.id, "sorun");
+        if (remain > 0) {
+          return interaction.reply({
+            content: `❌ Sorun bildirimi için tekrar beklemelisin: **${formatDuration(remain)}**`,
+            ephemeral: true
+          });
+        }
+
         const modal = new ModalBuilder()
           .setCustomId("modal_sorun")
           .setTitle("Sorunları İlet");
@@ -323,6 +431,14 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.customId === "open_istek_modal") {
+        const remain = getRemainingCooldown(interaction.user.id, "istek");
+        if (remain > 0) {
+          return interaction.reply({
+            content: `❌ İstek / öneri göndermek için tekrar beklemelisin: **${formatDuration(remain)}**`,
+            ephemeral: true
+          });
+        }
+
         const modal = new ModalBuilder()
           .setCustomId("modal_istek")
           .setTitle("İstek & Öneri Formu");
@@ -340,10 +456,41 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.customId === "open_yetkili_modal") {
-        // 3) Tekrar başvuru engeli
-        if (pendingApplications.has(interaction.user.id)) {
+        const remain = getRemainingCooldown(interaction.user.id, "basvuru");
+        if (remain > 0) {
+          return interaction.reply({
+            content: `❌ Yeni başvuru yapmadan önce beklemelisin: **${formatDuration(remain)}**`,
+            ephemeral: true
+          });
+        }
+
+        if (storage.pendingApplications[interaction.user.id]) {
           return interaction.reply({
             content: "❌ Zaten bekleyen bir yetkili başvurun var. Sonuçlanmadan yeni başvuru yapamazsın.",
+            ephemeral: true
+          });
+        }
+
+        // 14) Zaten yetkiliyse başvuru engeli
+        if (hasBlockedApplicationRole(interaction.member)) {
+          return interaction.reply({
+            content: "❌ Zaten yetkili sürecinde veya yetkili rollerinden birine sahipsin. Yeni başvuru yapamazsın.",
+            ephemeral: true
+          });
+        }
+
+        // 15) Hesap yaşı şartı
+        if (!getAccountAgeOk(interaction.user)) {
+          return interaction.reply({
+            content: `❌ Yetkili başvurusu için hesabının en az **${MIN_ACCOUNT_AGE_DAYS} gün** eski olması gerekiyor.`,
+            ephemeral: true
+          });
+        }
+
+        // Sunucuda 48 saat şartı
+        if (!getGuildTimeOk(interaction.member)) {
+          return interaction.reply({
+            content: `❌ Yetkili başvurusu için sunucuda en az **${MIN_GUILD_HOURS} saat** bulunman gerekiyor.`,
             ephemeral: true
           });
         }
@@ -371,23 +518,31 @@ client.on(Events.InteractionCreate, async interaction => {
         const onceYetkili = new TextInputBuilder()
           .setCustomId("once_yetkili")
           .setLabel("Daha önce yetkilik yaptınız mı?")
-          .setPlaceholder('Örn: Evet yaptım, "xxx" sunucusunda yönetim kadrosundaydım')
+          .setPlaceholder('Örn: Evet yaptım, "xxx" sunucusunda yönetimdeydim')
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(500);
 
         const neYaparsin = new TextInputBuilder()
           .setCustomId("ne_yaparsin")
-          .setLabel("Ne yapabilirsiniz bize açıklar mısınız?")
-          .setPlaceholder("Örn: Her işi yaparım vs.")
+          .setLabel("Ne yapabilirsiniz?")
+          .setPlaceholder("Örn: Chat aktifliği, üye ilgisi, rapor takibi...")
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(500);
 
+        const aktiflik = new TextInputBuilder()
+          .setCustomId("aktiflik")
+          .setLabel("Günlük ortalama aktifliğiniz?")
+          .setPlaceholder("Örn: Günde 4-5 saat aktif olabilirim")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100);
+
         const hakkinda = new TextInputBuilder()
           .setCustomId("hakkinda")
-          .setLabel("Hakkında birkaç şey söyler misin?")
-          .setPlaceholder("Örn: Telli enstrüman çalmayı çok seviyorum.")
+          .setLabel("Kendinizden biraz bahsedin")
+          .setPlaceholder("Kısa ama açıklayıcı şekilde kendinizi anlatın.")
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(500);
@@ -397,13 +552,13 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(referans),
           new ActionRowBuilder().addComponents(onceYetkili),
           new ActionRowBuilder().addComponents(neYaparsin),
-          new ActionRowBuilder().addComponents(hakkinda)
+          new ActionRowBuilder().addComponents(aktiflik)
         );
 
+        // 5 input sınırı olduğu için hakkinda yerine aktiflik aldık; istersen yer değiştiririz.
         return interaction.showModal(modal);
       }
 
-      // Sorun/istek okundu
       if (interaction.customId.startsWith("support_read_sorun_")) {
         if (!hasSupportReviewPermission(interaction.member)) {
           return interaction.reply({
@@ -480,7 +635,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // Yetkili kabul
       if (interaction.customId.startsWith("app_accept_")) {
         if (!hasApplicationReviewPermission(interaction.member)) {
           return interaction.reply({
@@ -496,9 +650,7 @@ client.on(Events.InteractionCreate, async interaction => {
         let roleStatus = "⚠️ Roller verilemedi.";
         if (targetMember) {
           try {
-            // 7) Rol zaten varsa tekrar verme
             const rolesToAdd = APPROVED_ROLE_IDS.filter(roleId => !targetMember.roles.cache.has(roleId));
-
             if (!rolesToAdd.length) {
               roleStatus = "ℹ️ Roller zaten kullanıcıda vardı.";
             } else {
@@ -517,8 +669,8 @@ client.on(Events.InteractionCreate, async interaction => {
           dmStatus = sent ? "✅ DM gönderildi." : "❌ DM gönderilemedi.";
         }
 
-        // bekleyen başvuru kaydını temizle
-        pendingApplications.delete(userId);
+        delete storage.pendingApplications[userId];
+        saveData(storage);
 
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
           .setColor("Green")
@@ -547,7 +699,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // 13) Reddet -> sebep seç menüsü
+      // 1 + "reddettikten sonra biz yazabilelim": modal aç
       if (interaction.customId.startsWith("app_reject_")) {
         if (!hasApplicationReviewPermission(interaction.member)) {
           return interaction.reply({
@@ -558,132 +710,21 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const userId = interaction.customId.split("_")[2];
 
-        const reasonMenu = new StringSelectMenuBuilder()
-          .setCustomId(`reject_reason_${userId}`)
-          .setPlaceholder("Red sebebi seçiniz")
-          .addOptions([
-            {
-              label: "Aktiflik yetersiz",
-              description: "Sunucu aktifliği yeterli değil.",
-              value: "aktiflik_yetersiz",
-              emoji: "📉"
-            },
-            {
-              label: "Başvuru özensiz",
-              description: "Başvuru yeterince özenli değil.",
-              value: "basvuru_ozensiz",
-              emoji: "📝"
-            },
-            {
-              label: "Uygun görülmedi",
-              description: "Yönetim tarafından uygun görülmedi.",
-              value: "uygun_gorulmedi",
-              emoji: "❌"
-            },
-            {
-              label: "Daha sonra tekrar dene",
-              description: "İleride yeniden başvurabilir.",
-              value: "tekrar_dene",
-              emoji: "🔁"
-            }
-          ]);
+        const modal = new ModalBuilder()
+          .setCustomId(`reject_modal_${userId}`)
+          .setTitle("Başvuru Red Sebebi");
 
-        const row = new ActionRowBuilder().addComponents(reasonMenu);
+        const input = new TextInputBuilder()
+          .setCustomId("reject_reason_text")
+          .setLabel("Red sebebini yazınız")
+          .setPlaceholder("Örn: Başvurunuz yeterince detaylı değildi, ileride tekrar deneyebilirsiniz.")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(800);
 
-        return interaction.reply({
-          content: "❗ Lütfen reddetme sebebini seçiniz:",
-          components: [row],
-          ephemeral: true
-        });
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
+        return interaction.showModal(modal);
       }
-    }
-
-    // 13) Red sebebi seçimi
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith("reject_reason_")) {
-      if (!hasApplicationReviewPermission(interaction.member)) {
-        return interaction.reply({
-          content: "❌ Bunu kullanma yetkin yok.",
-          ephemeral: true
-        });
-      }
-
-      const userId = interaction.customId.split("_")[2];
-      const targetUser = await client.users.fetch(userId).catch(() => null);
-
-      const reasonMap = {
-        aktiflik_yetersiz: "Aktiflik yetersiz görüldü.",
-        basvuru_ozensiz: "Başvurun yeterince özenli bulunmadı.",
-        uygun_gorulmedi: "Yönetim tarafından uygun görülmedi.",
-        tekrar_dene: "Şu an uygun görülmedi, daha sonra tekrar başvuru yapabilirsin."
-      };
-
-      const reasonLabel = reasonMap[interaction.values[0]] || "Uygun görülmedi.";
-
-      let dmStatus = "⚠️ DM gönderilemedi.";
-      if (targetUser) {
-        const sent = await sendSafeDM(targetUser, prettyRejectDM(targetUser.username, reasonLabel));
-        dmStatus = sent ? "✅ DM gönderildi." : "❌ DM gönderilemedi.";
-      }
-
-      pendingApplications.delete(userId);
-
-      // Başvuru kanalındaki ilgili mesajı bulup güncellemeye çalış
-      const appChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
-      if (appChannel?.isTextBased()) {
-        try {
-          const msgId = pendingApplications.get(userId); // temizledik ama alttaki blok için önce almak lazımdı
-        } catch {}
-      }
-
-      // En basit ve sağlam: ilgili kanal son mesajları arasında kullanıcı ID'si geçen bekleyen başvuruyu bul
-      const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
-      if (applicationChannel?.isTextBased()) {
-        try {
-          const messages = await applicationChannel.messages.fetch({ limit: 50 });
-          const targetMessage = messages.find(
-            m =>
-              m.author.id === client.user.id &&
-              m.embeds?.[0] &&
-              m.embeds[0].footer?.text?.includes(`Başvuran ID: ${userId}`) &&
-              m.components?.length
-          );
-
-          if (targetMessage) {
-            const updatedEmbed = EmbedBuilder.from(targetMessage.embeds[0])
-              .setColor("Red")
-              .addFields(
-                { name: "Durum", value: `❌ Reddedildi - ${interaction.user.tag}` },
-                { name: "Red Sebebi", value: reasonLabel },
-                { name: "DM Durumu", value: dmStatus }
-              );
-
-            const disabledRow = new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId("accepted_done")
-                .setLabel("Onaylandı")
-                .setStyle(ButtonStyle.Success)
-                .setDisabled(true),
-              new ButtonBuilder()
-                .setCustomId("rejected_done")
-                .setLabel("Reddedildi")
-                .setStyle(ButtonStyle.Danger)
-                .setDisabled(true)
-            );
-
-            await targetMessage.edit({
-              embeds: [updatedEmbed],
-              components: [disabledRow]
-            });
-          }
-        } catch (e) {
-          console.error("[RED GÜNCELLEME HATASI]", e);
-        }
-      }
-
-      return interaction.update({
-        content: `✅ Başvuru reddedildi.\n**Sebep:** ${reasonLabel}\n**DM:** ${dmStatus}`,
-        components: []
-      });
     }
 
     // Modal gönderimleri
@@ -693,14 +734,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const sorun = interaction.fields.getTextInputValue("sorun_text");
         const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+        if (!channel) return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
 
-        if (!channel) {
-          return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
-        }
-
+        const id = nextCounter("support");
         const embed = new EmbedBuilder()
           .setColor("Red")
-          .setTitle("⛔ Yeni Sorun Bildirimi")
+          .setTitle(`⛔ Yeni Sorun Bildirimi #${id}`)
           .addFields(
             { name: "Kullanıcı", value: `${interaction.user} (${interaction.user.tag})` },
             { name: "Sorun", value: sorun }
@@ -715,14 +754,10 @@ client.on(Events.InteractionCreate, async interaction => {
             .setEmoji("✅")
         );
 
-        await channel.send({
-          embeds: [embed],
-          components: [row]
-        });
+        await channel.send({ embeds: [embed], components: [row] });
+        setCooldown(interaction.user.id, "sorun");
 
-        return interaction.editReply({
-          content: "✅ Sorun bildirimin yetkili ekibe iletildi."
-        });
+        return interaction.editReply({ content: "✅ Sorun bildirimin yetkili ekibe iletildi." });
       }
 
       if (interaction.customId === "modal_istek") {
@@ -730,14 +765,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const istek = interaction.fields.getTextInputValue("istek_text");
         const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+        if (!channel) return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
 
-        if (!channel) {
-          return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
-        }
-
+        const id = nextCounter("support");
         const embed = new EmbedBuilder()
           .setColor("Blurple")
-          .setTitle("☑️ Yeni İstek / Öneri")
+          .setTitle(`☑️ Yeni İstek / Öneri #${id}`)
           .addFields(
             { name: "Kullanıcı", value: `${interaction.user} (${interaction.user.tag})` },
             { name: "İstek / Öneri", value: istek }
@@ -752,21 +785,16 @@ client.on(Events.InteractionCreate, async interaction => {
             .setEmoji("✅")
         );
 
-        await channel.send({
-          embeds: [embed],
-          components: [row]
-        });
+        await channel.send({ embeds: [embed], components: [row] });
+        setCooldown(interaction.user.id, "istek");
 
-        return interaction.editReply({
-          content: "✅ İstek / önerin yetkili ekibe iletildi."
-        });
+        return interaction.editReply({ content: "✅ İstek / önerin yetkili ekibe iletildi." });
       }
 
       if (interaction.customId === "modal_yetkili") {
         await interaction.deferReply({ ephemeral: true });
 
-        // 3) tekrar başvuru engeli (modal submit anında da kontrol)
-        if (pendingApplications.has(interaction.user.id)) {
+        if (storage.pendingApplications[interaction.user.id]) {
           return interaction.editReply({
             content: "❌ Zaten bekleyen bir yetkili başvurun var. Sonuçlanmadan yeni başvuru yapamazsın."
           });
@@ -776,23 +804,31 @@ client.on(Events.InteractionCreate, async interaction => {
         const referans = interaction.fields.getTextInputValue("referans") || "Belirtilmedi";
         const onceYetkili = interaction.fields.getTextInputValue("once_yetkili");
         const neYaparsin = interaction.fields.getTextInputValue("ne_yaparsin");
-        const hakkinda = interaction.fields.getTextInputValue("hakkinda");
+        const aktiflik = interaction.fields.getTextInputValue("aktiflik");
 
         const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
         if (!applicationChannel) {
           return interaction.editReply({ content: "❌ Başvuru kanalı bulunamadı." });
         }
 
+        const appId = nextCounter("application");
+
         const appEmbed = new EmbedBuilder()
           .setColor("#2b2d31")
-          .setTitle("🛡️ Yeni Yetkili Başvurusu")
+          .setTitle(`🛡️ Yeni Yetkili Başvurusu #${appId}`)
           .addFields(
             { name: "Başvuran", value: `${interaction.user} (${interaction.user.tag})` },
             { name: "İsim / Yaş", value: adYas },
             { name: "Referans", value: referans },
             { name: "Daha önce yetkilik yaptı mı?", value: onceYetkili },
-            { name: "Neler yapabilir?", value: neYaparsin },
-            { name: "Kendinden bahset", value: hakkinda }
+            { name: "Ne yapabilir?", value: neYaparsin },
+            { name: "Günlük aktiflik", value: aktiflik },
+            {
+              name: "Ek Kontroller",
+              value:
+                `• Hesap yaşı uygun: ${getAccountAgeOk(interaction.user) ? "✅" : "❌"}\n` +
+                `• Sunucuda 48 saat dolmuş: ${getGuildTimeOk(interaction.member) ? "✅" : "❌"}`
+            }
           )
           .setFooter({ text: `Başvuran ID: ${interaction.user.id}` });
 
@@ -814,10 +850,82 @@ client.on(Events.InteractionCreate, async interaction => {
           components: [row]
         });
 
-        pendingApplications.set(interaction.user.id, sentMessage.id);
+        storage.pendingApplications[interaction.user.id] = sentMessage.id;
+        saveData(storage);
+        setCooldown(interaction.user.id, "basvuru");
 
         return interaction.editReply({
           content: "✅ Yetkili başvurun başarıyla gönderildi. Sonuç sana DM üzerinden bildirilecektir."
+        });
+      }
+
+      // 1) Özel red sebebi modalı
+      if (interaction.customId.startsWith("reject_modal_")) {
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!hasApplicationReviewPermission(interaction.member)) {
+          return interaction.editReply({ content: "❌ Bunu kullanma yetkin yok." });
+        }
+
+        const userId = interaction.customId.split("_")[2];
+        const reasonLabel = interaction.fields.getTextInputValue("reject_reason_text");
+        const targetUser = await client.users.fetch(userId).catch(() => null);
+
+        let dmStatus = "⚠️ DM gönderilemedi.";
+        if (targetUser) {
+          const sent = await sendSafeDM(targetUser, prettyRejectDM(targetUser.username, reasonLabel));
+          dmStatus = sent ? "✅ DM gönderildi." : "❌ DM gönderilemedi.";
+        }
+
+        const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+        if (applicationChannel?.isTextBased()) {
+          try {
+            const messages = await applicationChannel.messages.fetch({ limit: 50 });
+            const targetMessage = messages.find(
+              m =>
+                m.author.id === client.user.id &&
+                m.embeds?.[0] &&
+                m.embeds[0].footer?.text?.includes(`Başvuran ID: ${userId}`) &&
+                m.components?.length
+            );
+
+            if (targetMessage) {
+              const updatedEmbed = EmbedBuilder.from(targetMessage.embeds[0])
+                .setColor("Red")
+                .addFields(
+                  { name: "Durum", value: `❌ Reddedildi - ${interaction.user.tag}` },
+                  { name: "Red Sebebi", value: reasonLabel },
+                  { name: "DM Durumu", value: dmStatus }
+                );
+
+              const disabledRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId("accepted_done")
+                  .setLabel("Onaylandı")
+                  .setStyle(ButtonStyle.Success)
+                  .setDisabled(true),
+                new ButtonBuilder()
+                  .setCustomId("rejected_done")
+                  .setLabel("Reddedildi")
+                  .setStyle(ButtonStyle.Danger)
+                  .setDisabled(true)
+              );
+
+              await targetMessage.edit({
+                embeds: [updatedEmbed],
+                components: [disabledRow]
+              });
+            }
+          } catch (e) {
+            console.error("[RED GÜNCELLEME HATASI]", e);
+          }
+        }
+
+        delete storage.pendingApplications[userId];
+        saveData(storage);
+
+        return interaction.editReply({
+          content: `✅ Başvuru reddedildi.\n**Sebep:** ${reasonLabel}\n**DM:** ${dmStatus}`
         });
       }
     }
