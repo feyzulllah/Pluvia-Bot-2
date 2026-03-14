@@ -337,10 +337,28 @@ function ensureUserStats(userId) {
     saveData(storage);
   }
 }
+const inviteCache = new Map();
 
+async function cacheInvites() {
+  try {
+    const guild = await client.guilds.fetch(process.env.GUILD_ID);
+    const invites = await guild.invites.fetch();
+
+    const mapped = new Map();
+    invites.forEach(invite => {
+      mapped.set(invite.code, invite.uses);
+    });
+
+    inviteCache.set(guild.id, mapped);
+    console.log("[DAVET] Davet cache hazırlandı");
+  } catch (error) {
+    console.error("[DAVET CACHE HATASI]", error);
+  }
+}
 client.once(Events.ClientReady, async () => {
   console.log(`[BOT] ${client.user.tag} aktif`);
   await registerCommands();
+  await cacheInvites();
 });
 
 client.on("messageCreate", async message => {
@@ -1289,5 +1307,56 @@ client.on(Events.InteractionCreate, async interaction => {
     } catch {}
   }
 });
+client.on("guildMemberAdd", async member => {
+  try {
+    const guild = member.guild;
+    const oldInvites = inviteCache.get(guild.id) || new Map();
+    const newInvites = await guild.invites.fetch();
 
+    let usedInvite = null;
+
+    for (const invite of newInvites.values()) {
+      const oldUses = oldInvites.get(invite.code) || 0;
+      if (invite.uses > oldUses) {
+        usedInvite = invite;
+        break;
+      }
+    }
+
+    const updatedMap = new Map();
+    newInvites.forEach(invite => {
+      updatedMap.set(invite.code, invite.uses);
+    });
+    inviteCache.set(guild.id, updatedMap);
+
+    if (!usedInvite || !usedInvite.inviter) return;
+
+    const inviterId = usedInvite.inviter.id;
+
+    if (!storage.invites[inviterId]) {
+      storage.invites[inviterId] = {
+        total: 0,
+        daily: 0,
+        weekly: 0,
+        monthly: 0,
+        invitedUsers: []
+      };
+    }
+
+    storage.invites[inviterId].total += 1;
+    storage.invites[inviterId].daily += 1;
+    storage.invites[inviterId].weekly += 1;
+    storage.invites[inviterId].monthly += 1;
+
+    const invitedName = member.user.username;
+    if (!storage.invites[inviterId].invitedUsers.includes(invitedName)) {
+      storage.invites[inviterId].invitedUsers.push(invitedName);
+    }
+
+    saveData(storage);
+    console.log(`[DAVET] ${usedInvite.inviter.tag} -> ${member.user.tag}`);
+  } catch (error) {
+    console.error("[DAVET TAKIP HATASI]", error);
+  }
+});
 client.login(process.env.TOKEN);
