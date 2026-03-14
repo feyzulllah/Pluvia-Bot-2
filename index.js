@@ -115,7 +115,11 @@ const commands = [
         .setName("miktar")
         .setDescription("Silinecek mesaj sayısı (1 - 200)")
         .setRequired(true)
-    )
+    ),
+
+  new SlashCommandBuilder()
+    .setName("özür")
+    .setDescription("Yağmur için özel özür embedi gönderir")
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -197,6 +201,39 @@ function panelEmbed() {
       ].join("\n")
     )
     .setFooter({ text: "Pluvia Destek & Başvuru Sistemi" });
+}
+
+function apologyEmbed() {
+  return new EmbedBuilder()
+    .setColor("#ff4d88")
+    .setTitle("🌧️ Yağmur’a Bir Özür")
+    .setDescription(
+      [
+        "Yağmur,",
+        "",
+        "Sana gerçekten büyük bir yanlış yaptım.",
+        "Bunun bahanesi yok ve bunu inkâr edecek değilim.",
+        "",
+        "Belki ikimizin de hataları oldu,",
+        "belki bazı şeyleri ikimiz de yanlış yönettik.",
+        "Ama ben yine de seni kırdığım,",
+        "üzdüğüm ve kalbinde iz bıraktığım için",
+        "içtenlikle özür diliyorum.",
+        "",
+        "Seni hâlâ çok seviyorum.",
+        "Ve tam da bu yüzden,",
+        "aramızdaki her şeyin böyle kalmasını istemiyorum.",
+        "",
+        "Barışmak istiyorum.",
+        "Geçmişi yok saymak için değil,",
+        "hatalarımızı görüp daha güzel bir şekilde yeniden konuşabilmek için.",
+        "",
+        "Affetmek zorunda değilsin.",
+        "Ama bu özrün gerçekten kalbimden geldiğini bilmeni isterim. 🌹"
+      ].join("\n")
+    )
+    .setImage("https://i.imgur.com/8Km9tLL.jpeg")
+    .setFooter({ text: "Bazen en gerçek şey, samimi bir özürdür." });
 }
 
 function prettyAcceptDM(username) {
@@ -393,6 +430,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
         return interaction.editReply({
           content: `✅ Başarıyla **${silinenToplam}** mesaj silindi.`
+        });
+      }
+
+      if (interaction.commandName === "özür") {
+        return interaction.reply({
+          embeds: [apologyEmbed()]
         });
       }
     }
