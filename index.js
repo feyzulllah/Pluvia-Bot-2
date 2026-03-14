@@ -328,12 +328,31 @@ function nextCounter(type) {
   return storage.counters[type];
 }
 
+function getCurrentWeekKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-W${Math.ceil(now.getDate() / 7)}`;
+}
+
 function ensureUserStats(userId) {
+  const currentWeek = getCurrentWeekKey();
+
   if (!storage.stats[userId]) {
     storage.stats[userId] = {
       weeklyMessages: 0,
-      weeklyVoiceMinutes: 0
+      weeklyVoiceMinutes: 0,
+      totalMessages: 0,
+      totalVoiceMinutes: 0,
+      lastWeek: currentWeek,
+      voiceJoinAt: null
     };
+    saveData(storage);
+    return;
+  }
+
+  if (storage.stats[userId].lastWeek !== currentWeek) {
+    storage.stats[userId].weeklyMessages = 0;
+    storage.stats[userId].weeklyVoiceMinutes = 0;
+    storage.stats[userId].lastWeek = currentWeek;
     saveData(storage);
   }
 }
@@ -365,9 +384,10 @@ client.on("messageCreate", async message => {
   try {
     if (!message.guild || message.author.bot) return;
 
-    ensureUserStats(message.author.id);
-    storage.stats[message.author.id].weeklyMessages += 1;
-    saveData(storage);
+   ensureUserStats(message.author.id);
+storage.stats[message.author.id].weeklyMessages += 1;
+storage.stats[message.author.id].totalMessages += 1;
+saveData(storage);
 
     if (storage.afk[message.author.id]) {
       delete storage.afk[message.author.id];
@@ -1333,20 +1353,43 @@ client.on("guildMemberAdd", async member => {
 
     const inviterId = usedInvite.inviter.id;
 
-    if (!storage.invites[inviterId]) {
-      storage.invites[inviterId] = {
-        total: 0,
-        daily: 0,
-        weekly: 0,
-        monthly: 0,
-        invitedUsers: []
-      };
-    }
+  const now = new Date();
+const currentDay = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+const currentWeek = `${now.getFullYear()}-W${Math.ceil(now.getDate() / 7)}`;
+const currentMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
 
-    storage.invites[inviterId].total += 1;
-    storage.invites[inviterId].daily += 1;
-    storage.invites[inviterId].weekly += 1;
-    storage.invites[inviterId].monthly += 1;
+if (!storage.invites[inviterId]) {
+  storage.invites[inviterId] = {
+    total: 0,
+    daily: 0,
+    weekly: 0,
+    monthly: 0,
+    invitedUsers: [],
+    lastDay: currentDay,
+    lastWeek: currentWeek,
+    lastMonth: currentMonth
+  };
+}
+
+if (storage.invites[inviterId].lastDay !== currentDay) {
+  storage.invites[inviterId].daily = 0;
+  storage.invites[inviterId].lastDay = currentDay;
+}
+
+if (storage.invites[inviterId].lastWeek !== currentWeek) {
+  storage.invites[inviterId].weekly = 0;
+  storage.invites[inviterId].lastWeek = currentWeek;
+}
+
+if (storage.invites[inviterId].lastMonth !== currentMonth) {
+  storage.invites[inviterId].monthly = 0;
+  storage.invites[inviterId].lastMonth = currentMonth;
+}
+
+storage.invites[inviterId].total += 1;
+storage.invites[inviterId].daily += 1;
+storage.invites[inviterId].weekly += 1;
+storage.invites[inviterId].monthly += 1;
 
     const invitedName = member.user.username;
     if (!storage.invites[inviterId].invitedUsers.includes(invitedName)) {
@@ -1358,5 +1401,58 @@ client.on("guildMemberAdd", async member => {
   } catch (error) {
     console.error("[DAVET TAKIP HATASI]", error);
   }
+  client.on("voiceStateUpdate", (oldState, newState) => {
+  try {
+    const userId = newState.id;
+    ensureUserStats(userId);
+
+    const oldChannel = oldState.channelId;
+    const newChannel = newState.channelId;
+
+    // Ses kanalına giriş
+    if (!oldChannel && newChannel) {
+      storage.stats[userId].voiceJoinAt = Date.now();
+      saveData(storage);
+      return;
+    }
+
+    // Ses kanalından çıkış
+    if (oldChannel && !newChannel) {
+      const joinAt = storage.stats[userId].voiceJoinAt;
+      if (joinAt) {
+        const diffMs = Date.now() - joinAt;
+        const diffMinutes = Math.floor(diffMs / 60000);
+
+        if (diffMinutes > 0) {
+          storage.stats[userId].weeklyVoiceMinutes += diffMinutes;
+          storage.stats[userId].totalVoiceMinutes += diffMinutes;
+        }
+
+        storage.stats[userId].voiceJoinAt = null;
+        saveData(storage);
+      }
+      return;
+    }
+
+    // Kanaldan kanala geçiş
+    if (oldChannel && newChannel && oldChannel !== newChannel) {
+      const joinAt = storage.stats[userId].voiceJoinAt;
+      if (joinAt) {
+        const diffMs = Date.now() - joinAt;
+        const diffMinutes = Math.floor(diffMs / 60000);
+
+        if (diffMinutes > 0) {
+          storage.stats[userId].weeklyVoiceMinutes += diffMinutes;
+          storage.stats[userId].totalVoiceMinutes += diffMinutes;
+        }
+      }
+
+      storage.stats[userId].voiceJoinAt = Date.now();
+      saveData(storage);
+    }
+  } catch (error) {
+    console.error("[VOICE STAT HATASI]", error);
+  }
+
 });
 client.login(process.env.TOKEN);
