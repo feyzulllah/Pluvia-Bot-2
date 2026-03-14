@@ -1545,6 +1545,8 @@ client.on("guildMemberAdd", async member => {
 
 client.on("voiceStateUpdate", (oldState, newState) => {
   try {
+    console.log(`[VOICE] ${newState.member?.user?.tag || newState.id} | ${oldState.channelId} -> ${newState.channelId}`);
+
     const userId = newState.id;
     ensureUserStats(userId);
 
