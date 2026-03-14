@@ -47,7 +47,6 @@ const BLOCKED_APPLICATION_ROLE_IDS = [
 ];
 
 const INVITE_LINK = "https://discord.gg/pluvia";
-
 const MIN_ACCOUNT_AGE_DAYS = 30;
 const MIN_GUILD_HOURS = 48;
 
@@ -106,7 +105,17 @@ const client = new Client({
 const commands = [
   new SlashCommandBuilder()
     .setName("panel")
-    .setDescription("Destek panelini gönderir")
+    .setDescription("Destek panelini gönderir"),
+
+  new SlashCommandBuilder()
+    .setName("temizle")
+    .setDescription("Belirtilen miktarda mesaj siler")
+    .addIntegerOption(option =>
+      option
+        .setName("miktar")
+        .setDescription("Silinecek mesaj sayısı (10 - 200)")
+        .setRequired(true)
+    )
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -316,42 +325,79 @@ client.once(Events.ClientReady, async () => {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-    // /panel
-    if (interaction.isChatInputCommand() && interaction.commandName === "panel") {
-      await interaction.deferReply({ ephemeral: true });
+    // /panel ve /temizle
+    if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === "panel") {
+        await interaction.deferReply({ ephemeral: true });
 
-      if (!hasPanelPermission(interaction.member)) {
-        return interaction.editReply({ content: "❌ Bu komutu kullanma yetkin yok." });
+        if (!hasPanelPermission(interaction.member)) {
+          return interaction.editReply({ content: "❌ Bu komutu kullanma yetkin yok." });
+        }
+
+        const infoMenu = new StringSelectMenuBuilder()
+          .setCustomId("info_menu")
+          .setPlaceholder("Bir işlem seçiniz")
+          .addOptions([
+            { label: "Katılım Tarihi", description: "Sunucuya giriş tarihinizi öğrenin.", value: "katilim_tarihi", emoji: "🕓" },
+            { label: "Hesap Tarihi", description: "Hesabınızın açılış tarihini öğrenin.", value: "hesap_tarihi", emoji: "📅" },
+            { label: "Rol Bilgisi", description: "Üzerinizde bulunan rolleri listeleyin.", value: "rol_bilgisi", emoji: "🎭" },
+            { label: "Davet Bilgisi", description: "Sunucu davet bağlantısını alın.", value: "davet_bilgisi", emoji: "📨" },
+            { label: "İsim Güncelleme", description: "İsim güncelleme talebi oluşturun.", value: "isim_guncelleme", emoji: "✏️" }
+          ]);
+
+        const menuRow = new ActionRowBuilder().addComponents(infoMenu);
+
+        const buttonRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("open_sorun_modal").setLabel("Sorunlarımı İletmek İstiyorum").setStyle(ButtonStyle.Danger).setEmoji("⛔"),
+          new ButtonBuilder().setCustomId("open_istek_modal").setLabel("İsteklerimi İletmek İstiyorum").setStyle(ButtonStyle.Secondary).setEmoji("☑️"),
+          new ButtonBuilder().setCustomId("open_yetkili_modal").setLabel("Yetkili Olmak İstiyorum").setStyle(ButtonStyle.Success).setEmoji("🛡️")
+        );
+
+        await interaction.channel.send({
+          embeds: [panelEmbed()],
+          components: [menuRow, buttonRow]
+        });
+
+        return interaction.editReply({ content: "✅ Panel başarıyla gönderildi." });
       }
 
-      const infoMenu = new StringSelectMenuBuilder()
-        .setCustomId("info_menu")
-        .setPlaceholder("Bir işlem seçiniz")
-        .addOptions([
-          { label: "Katılım Tarihi", description: "Sunucuya giriş tarihinizi öğrenin.", value: "katilim_tarihi", emoji: "🕓" },
-          { label: "Hesap Tarihi", description: "Hesabınızın açılış tarihini öğrenin.", value: "hesap_tarihi", emoji: "📅" },
-          { label: "Rol Bilgisi", description: "Üzerinizde bulunan rolleri listeleyin.", value: "rol_bilgisi", emoji: "🎭" },
-          { label: "Davet Bilgisi", description: "Sunucu davet bağlantısını alın.", value: "davet_bilgisi", emoji: "📨" },
-          { label: "İsim Güncelleme", description: "İsim güncelleme talebi oluşturun.", value: "isim_guncelleme", emoji: "✏️" }
-        ]);
+      if (interaction.commandName === "temizle") {
+        await interaction.deferReply({ ephemeral: true });
 
-      const menuRow = new ActionRowBuilder().addComponents(infoMenu);
+        if (!hasPanelPermission(interaction.member)) {
+          return interaction.editReply({
+            content: "❌ Bu komutu kullanma yetkin yok."
+          });
+        }
 
-      const buttonRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("open_sorun_modal").setLabel("Sorunlarımı İletmek İstiyorum").setStyle(ButtonStyle.Danger).setEmoji("⛔"),
-        new ButtonBuilder().setCustomId("open_istek_modal").setLabel("İsteklerimi İletmek İstiyorum").setStyle(ButtonStyle.Secondary).setEmoji("☑️"),
-        new ButtonBuilder().setCustomId("open_yetkili_modal").setLabel("Yetkili Olmak İstiyorum").setStyle(ButtonStyle.Success).setEmoji("🛡️")
-      );
+        const miktar = interaction.options.getInteger("miktar");
 
-      await interaction.channel.send({
-        embeds: [panelEmbed()],
-        components: [menuRow, buttonRow]
-      });
+        if (miktar < 10 || miktar > 200) {
+          return interaction.editReply({
+            content: "❌ En az **10**, en fazla **200** mesaj silebilirsin."
+          });
+        }
 
-      return interaction.editReply({ content: "✅ Panel başarıyla gönderildi." });
+        const channel = interaction.channel;
+        let silinenToplam = 0;
+        let kalan = miktar;
+
+        while (kalan > 0) {
+          const cek = kalan > 100 ? 100 : kalan;
+          const silinen = await channel.bulkDelete(cek, true).catch(() => null);
+
+          if (!silinen || silinen.size === 0) break;
+
+          silinenToplam += silinen.size;
+          kalan -= cek;
+        }
+
+        return interaction.editReply({
+          content: `✅ Başarıyla **${silinenToplam}** mesaj silindi.`
+        });
+      }
     }
 
-    // Menü
     if (interaction.isStringSelectMenu() && interaction.customId === "info_menu") {
       const v = interaction.values[0];
 
@@ -390,7 +436,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // YENİ: İsim güncelleme modalı
       if (v === "isim_guncelleme") {
         const remain = getRemainingCooldown(interaction.user.id, "isim");
         if (remain > 0) {
@@ -417,7 +462,6 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
-    // Butonlar
     if (interaction.isButton()) {
       if (interaction.customId === "open_sorun_modal") {
         const remain = getRemainingCooldown(interaction.user.id, "sorun");
@@ -656,7 +700,6 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
-      // YENİ: İsim talebi onay
       if (interaction.customId.startsWith("rename_accept_")) {
         if (!hasSupportReviewPermission(interaction.member)) {
           return interaction.reply({
@@ -704,7 +747,6 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
       }
 
-      // YENİ: İsim talebi red -> modal
       if (interaction.customId.startsWith("rename_reject_")) {
         if (!hasSupportReviewPermission(interaction.member)) {
           return interaction.reply({
@@ -714,11 +756,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const userId = interaction.customId.split("_")[2];
-
-        const modal = new ModalBuilder()
-          .setCustomId(`rename_reject_modal_${userId}`)
-          .setTitle("İsim Talebi Red Sebebi");
-
+        const modal = new ModalBuilder().setCustomId(`rename_reject_modal_${userId}`).setTitle("İsim Talebi Red Sebebi");
         const input = new TextInputBuilder()
           .setCustomId("rename_reject_reason")
           .setLabel("Red sebebini yazınız")
@@ -732,7 +770,6 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
-    // Modal submit
     if (interaction.isModalSubmit()) {
       if (interaction.customId === "modal_sorun") {
         await interaction.deferReply({ ephemeral: true });
@@ -900,7 +937,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // YENİ: İsim değiştirme talebi
       if (interaction.customId === "modal_rename") {
         await interaction.deferReply({ ephemeral: true });
 
@@ -912,7 +948,6 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const id = nextCounter("rename");
-
         const embed = new EmbedBuilder()
           .setColor("#2b2d31")
           .setTitle(`✏️ Yeni İsim Talebi #${id}`)
@@ -923,25 +958,12 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
         const encodedName = encodeURIComponent(requestedName);
-
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`rename_accept_${interaction.user.id}_${encodedName}`)
-            .setLabel("Onayla")
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("✅"),
-          new ButtonBuilder()
-            .setCustomId(`rename_reject_${interaction.user.id}`)
-            .setLabel("Reddet")
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji("❌")
+          new ButtonBuilder().setCustomId(`rename_accept_${interaction.user.id}_${encodedName}`).setLabel("Onayla").setStyle(ButtonStyle.Success).setEmoji("✅"),
+          new ButtonBuilder().setCustomId(`rename_reject_${interaction.user.id}`).setLabel("Reddet").setStyle(ButtonStyle.Danger).setEmoji("❌")
         );
 
-        await channel.send({
-          embeds: [embed],
-          components: [row]
-        });
-
+        await channel.send({ embeds: [embed], components: [row] });
         setCooldown(interaction.user.id, "isim");
 
         return interaction.editReply({
@@ -949,7 +971,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // YENİ: İsim talebi red sebebi
       if (interaction.customId.startsWith("rename_reject_modal_")) {
         await interaction.deferReply({ ephemeral: true });
 
