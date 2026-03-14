@@ -113,7 +113,7 @@ const commands = [
     .addIntegerOption(option =>
       option
         .setName("miktar")
-        .setDescription("Silinecek mesaj sayısı (10 - 200)")
+        .setDescription("Silinecek mesaj sayısı (1 - 200)")
         .setRequired(true)
     )
 ].map(c => c.toJSON());
@@ -325,7 +325,6 @@ client.once(Events.ClientReady, async () => {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-    // /panel ve /temizle
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "panel") {
         await interaction.deferReply({ ephemeral: true });
@@ -372,9 +371,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const miktar = interaction.options.getInteger("miktar");
 
-        if (miktar < 10 || miktar > 200) {
+        if (miktar < 1 || miktar > 200) {
           return interaction.editReply({
-            content: "❌ En az **10**, en fazla **200** mesaj silebilirsin."
+            content: "❌ En az **1**, en fazla **200** mesaj silebilirsin."
           });
         }
 
