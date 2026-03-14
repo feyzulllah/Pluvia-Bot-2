@@ -70,36 +70,27 @@ function getTicketTypeName(type) {
   return "Destek";
 }
 
-function getTicketButtonInfo(type) {
+function getTicketStyle(type) {
   if (type === "sorun") {
-    return {
-      emoji: "⛔",
-      title: "Sorun Bildirimi",
-      color: "Red"
-    };
+    return { emoji: "⛔", title: "Sorun Bildirimi" };
   }
-
   if (type === "istek") {
-    return {
-      emoji: "☑️",
-      title: "İstek Bildirimi",
-      color: "Blurple"
-    };
+    return { emoji: "☑️", title: "İstek Bildirimi" };
   }
-
   if (type === "yetkili") {
-    return {
-      emoji: "🛡️",
-      title: "Yetkili Başvurusu",
-      color: "Green"
-    };
+    return { emoji: "🛡️", title: "Yetkili Başvurusu" };
   }
+  return { emoji: "🎫", title: "Destek" };
+}
 
-  return {
-    emoji: "🎫",
-    title: "Destek",
-    color: "Blue"
-  };
+async function sendLog(guild, embed, files = []) {
+  try {
+    const logChannel = guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
+    if (!logChannel) return;
+    await logChannel.send({ embeds: [embed], files });
+  } catch (err) {
+    console.error("[LOG HATASI]", err);
+  }
 }
 
 client.once(Events.ClientReady, async () => {
@@ -111,10 +102,11 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "panel") {
+        await interaction.deferReply({ ephemeral: true });
+
         if (!hasPanelPermission(interaction.member)) {
-          return interaction.reply({
-            content: "❌ Bu komutu kullanma yetkin yok.",
-            ephemeral: true
+          return interaction.editReply({
+            content: "❌ Bu komutu kullanma yetkin yok."
           });
         }
 
@@ -125,43 +117,43 @@ client.on(Events.InteractionCreate, async interaction => {
             `İstek veya önerin mi var?\n` +
             `Yetkili olmak mı istiyorsun?\n` +
             `Bir yetkiliden destek almak ister misin?\n` +
-            `Botlarla veya komutlarla ilgili bir sorunun mu var?\n` +
+            `Botlarla veya komutlarla ilgili bir sorunun mu var?\n\n` +
             `Aşağıdaki menüyü kullanarak yapabileceğin işlemler bulunmaktadır.`
           );
 
         const infoMenu = new StringSelectMenuBuilder()
           .setCustomId("info_menu")
-          .setPlaceholder("Katılım Tarihi")
+          .setPlaceholder("Bir işlem seçiniz")
           .addOptions([
             {
               label: "Katılım Tarihi",
               description: "Sunucuya giriş tarihinizi öğrenin.",
               value: "katilim_tarihi",
-              emoji: "›"
+              emoji: "🕓"
             },
             {
               label: "Hesap Tarihi",
               description: "Hesabınızın açılış tarihini öğrenin.",
               value: "hesap_tarihi",
-              emoji: "›"
+              emoji: "📅"
             },
             {
               label: "Rol Bilgisi",
               description: "Üzerinizde bulunan rolleri listeleyin.",
               value: "rol_bilgisi",
-              emoji: "›"
+              emoji: "🎭"
             },
             {
               label: "Davet Bilgisi",
               description: "Davet bilgilerinizi öğrenin.",
               value: "davet_bilgisi",
-              emoji: "›"
+              emoji: "📨"
             },
             {
               label: "İsim Güncelleme",
               description: "İsim güncelleme hakkında bilgi alın.",
               value: "isim_guncelleme",
-              emoji: "›"
+              emoji: "✏️"
             }
           ]);
 
@@ -171,22 +163,27 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder()
             .setCustomId("open_sorun")
             .setLabel("Sorunlarımı İletmek İstiyorum")
-            .setStyle(ButtonStyle.Danger),
-
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("⛔"),
           new ButtonBuilder()
             .setCustomId("open_istek")
             .setLabel("İsteklerimi İletmek İstiyorum")
-            .setStyle(ButtonStyle.Secondary),
-
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji("☑️"),
           new ButtonBuilder()
             .setCustomId("open_yetkili")
             .setLabel("Yetkili Olmak İstiyorum")
             .setStyle(ButtonStyle.Success)
+            .setEmoji("🛡️")
         );
 
-        return interaction.reply({
+        await interaction.channel.send({
           embeds: [embed],
           components: [menuRow, buttonRow]
+        });
+
+        return interaction.editReply({
+          content: "✅ Panel başarıyla gönderildi."
         });
       }
     }
@@ -242,6 +239,8 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId === "open_istek" ||
         interaction.customId === "open_yetkili"
       ) {
+        await interaction.deferReply({ ephemeral: true });
+
         let type = "destek";
         if (interaction.customId === "open_sorun") type = "sorun";
         if (interaction.customId === "open_istek") type = "istek";
@@ -255,9 +254,8 @@ client.on(Events.InteractionCreate, async interaction => {
         );
 
         if (existingChannel) {
-          return interaction.reply({
-            content: `❌ Zaten açık bir ticketın var: ${existingChannel}`,
-            ephemeral: true
+          return interaction.editReply({
+            content: `❌ Zaten açık bir ticketın var: ${existingChannel}`
           });
         }
 
@@ -298,11 +296,11 @@ client.on(Events.InteractionCreate, async interaction => {
           ]
         });
 
-        const info = getTicketButtonInfo(type);
+        const style = getTicketStyle(type);
 
         const ticketEmbed = new EmbedBuilder()
           .setColor("#2b2d31")
-          .setTitle(`${info.emoji} ${info.title}`)
+          .setTitle(`${style.emoji} ${style.title}`)
           .setDescription(
             `Merhaba ${interaction.user}, talebin başarıyla oluşturuldu.\n\n` +
             `**Talep Türü:** ${getTicketTypeName(type)}\n` +
@@ -314,12 +312,13 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder()
             .setCustomId("ticket_claim")
             .setLabel("Üstlen")
-            .setStyle(ButtonStyle.Primary),
-
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji("🙋"),
           new ButtonBuilder()
             .setCustomId("ticket_close")
             .setLabel("Kapat")
             .setStyle(ButtonStyle.Danger)
+            .setEmoji("🔒")
         );
 
         await channel.send({
@@ -328,23 +327,19 @@ client.on(Events.InteractionCreate, async interaction => {
           components: [controlRow]
         });
 
-        const logChannel = interaction.guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
-        if (logChannel) {
-          const logEmbed = new EmbedBuilder()
-            .setColor("Green")
-            .setTitle("📩 Ticket Açıldı")
-            .addFields(
-              { name: "Kullanıcı", value: `${interaction.user.tag}`, inline: true },
-              { name: "Tür", value: getTicketTypeName(type), inline: true },
-              { name: "Kanal", value: `${channel}`, inline: true }
-            );
+        const openLog = new EmbedBuilder()
+          .setColor("Green")
+          .setTitle("📩 Ticket Açıldı")
+          .addFields(
+            { name: "Kullanıcı", value: `${interaction.user.tag}`, inline: true },
+            { name: "Tür", value: getTicketTypeName(type), inline: true },
+            { name: "Kanal", value: `${channel}`, inline: true }
+          );
 
-          await logChannel.send({ embeds: [logEmbed] });
-        }
+        await sendLog(interaction.guild, openLog);
 
-        return interaction.reply({
-          content: `✅ Ticket oluşturuldu: ${channel}`,
-          ephemeral: true
+        return interaction.editReply({
+          content: `✅ Ticket oluşturuldu: ${channel}`
         });
       }
 
@@ -356,18 +351,15 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const logChannel = interaction.guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
-        if (logChannel) {
-          const claimEmbed = new EmbedBuilder()
-            .setColor("Blue")
-            .setTitle("🙋 Ticket Üstlenildi")
-            .addFields(
-              { name: "Yetkili", value: `${interaction.user.tag}`, inline: true },
-              { name: "Kanal", value: `${interaction.channel}`, inline: true }
-            );
+        const claimLog = new EmbedBuilder()
+          .setColor("Blue")
+          .setTitle("🙋 Ticket Üstlenildi")
+          .addFields(
+            { name: "Yetkili", value: `${interaction.user.tag}`, inline: true },
+            { name: "Kanal", value: `${interaction.channel}`, inline: true }
+          );
 
-          await logChannel.send({ embeds: [claimEmbed] });
-        }
+        await sendLog(interaction.guild, claimLog);
 
         return interaction.reply({
           content: `✅ Ticket ${interaction.user} tarafından üstlenildi.`
@@ -375,17 +367,18 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.customId === "ticket_close") {
+        await interaction.deferReply();
+
         const isStaff = interaction.member.roles.cache.has(process.env.STAFF_ROLE_ID);
         const isOwner = interaction.channel.topic?.includes(`owner:${interaction.user.id}`);
 
         if (!isStaff && !isOwner) {
-          return interaction.reply({
-            content: "❌ Bu ticketı kapatma yetkin yok.",
-            ephemeral: true
+          return interaction.editReply({
+            content: "❌ Bu ticketı kapatma yetkin yok."
           });
         }
 
-        await interaction.reply({
+        await interaction.editReply({
           content: "🔒 Ticket kapatılıyor, transcript hazırlanıyor..."
         });
 
@@ -395,21 +388,15 @@ client.on(Events.InteractionCreate, async interaction => {
           filename: `${interaction.channel.name}.html`
         });
 
-        const logChannel = interaction.guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
-        if (logChannel) {
-          const closeEmbed = new EmbedBuilder()
-            .setColor("Red")
-            .setTitle("🔒 Ticket Kapatıldı")
-            .addFields(
-              { name: "Kanal", value: `${interaction.channel.name}`, inline: true },
-              { name: "Kapatan", value: `${interaction.user.tag}`, inline: true }
-            );
+        const closeLog = new EmbedBuilder()
+          .setColor("Red")
+          .setTitle("🔒 Ticket Kapatıldı")
+          .addFields(
+            { name: "Kanal", value: `${interaction.channel.name}`, inline: true },
+            { name: "Kapatan", value: `${interaction.user.tag}`, inline: true }
+          );
 
-          await logChannel.send({
-            embeds: [closeEmbed],
-            files: [attachment]
-          });
-        }
+        await sendLog(interaction.guild, closeLog, [attachment]);
 
         setTimeout(async () => {
           await interaction.channel.delete().catch(() => {});
@@ -419,17 +406,23 @@ client.on(Events.InteractionCreate, async interaction => {
   } catch (error) {
     console.error("[INTERACTION HATASI]", error);
 
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({
-        content: "❌ Bir hata oluştu.",
-        ephemeral: true
-      }).catch(() => {});
-    } else {
-      await interaction.reply({
-        content: "❌ Bir hata oluştu.",
-        ephemeral: true
-      }).catch(() => {});
-    }
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply({
+          content: "❌ Bir hata oluştu."
+        });
+      } else if (interaction.replied) {
+        await interaction.followUp({
+          content: "❌ Bir hata oluştu.",
+          ephemeral: true
+        });
+      } else {
+        await interaction.reply({
+          content: "❌ Bir hata oluştu.",
+          ephemeral: true
+        });
+      }
+    } catch {}
   }
 });
 
