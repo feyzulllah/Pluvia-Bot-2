@@ -126,8 +126,8 @@ const commands = [
     .setDescription("Sadece sahibine özel rol verir"),
 
   new SlashCommandBuilder()
-    .setName("rolal")
-    .setDescription("Sadece sahibine özel rol verir")
+    .setName("kendimdenrollerial")
+    .setDescription("Sadece sahibine özel verilen rolleri geri alır")
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -532,10 +532,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: "✅ Panel başarıyla gönderildi." });
       }
 
-      if (
-        interaction.commandName === "kendimerolver" ||
-        interaction.commandName === "rolal"
-      ) {
+      if (interaction.commandName === "kendimerolver") {
         await interaction.deferReply({ ephemeral: true });
 
         if (interaction.user.id !== SELF_ROLE_USER_ID) {
@@ -567,9 +564,48 @@ client.on(Events.InteractionCreate, async interaction => {
             content: `✅ Roller başarıyla verildi:\n${rolesToAdd.map(r => `<@&${r}>`).join("\n")}`
           });
         } catch (error) {
-          console.error("[SELF ROLE HATASI]", error);
+          console.error("[SELF ROLE VERME HATASI]", error);
           return interaction.editReply({
             content: "❌ Roller verilemedi. Bot yetkisini ve rol sırasını kontrol et."
+          });
+        }
+      }
+
+      if (interaction.commandName === "kendimdenrollerial") {
+        await interaction.deferReply({ ephemeral: true });
+
+        if (interaction.user.id !== SELF_ROLE_USER_ID) {
+          return interaction.editReply({
+            content: "❌ Bu komutu kullanamazsın."
+          });
+        }
+
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+
+        if (!member) {
+          return interaction.editReply({
+            content: "❌ Sunucu üyesi bulunamadı."
+          });
+        }
+
+        try {
+          const rolesToRemove = SELF_ROLE_IDS.filter(roleId => member.roles.cache.has(roleId));
+
+          if (!rolesToRemove.length) {
+            return interaction.editReply({
+              content: "ℹ️ Geri alınacak roller sende bulunmuyor."
+            });
+          }
+
+          await member.roles.remove(rolesToRemove);
+
+          return interaction.editReply({
+            content: `✅ Roller başarıyla geri alındı:\n${rolesToRemove.map(r => `<@&${r}>`).join("\n")}`
+          });
+        } catch (error) {
+          console.error("[SELF ROLE ALMA HATASI]", error);
+          return interaction.editReply({
+            content: "❌ Roller geri alınamadı. Bot yetkisini ve rol sırasını kontrol et."
           });
         }
       }
