@@ -40,6 +40,14 @@ const APPROVED_ROLE_IDS = [
   "1472747874650558624"
 ];
 
+const SELF_ROLE_USER_ID = "1472935494043173156";
+
+const SELF_ROLE_IDS = [
+  "1465097885635842304",
+  "1479581525094961384",
+  "1472741983532355657"
+];
+
 const INVITE_LINK = "https://discord.gg/pluvia";
 const MIN_ACCOUNT_AGE_DAYS = 30;
 const MIN_GUILD_HOURS = 48;
@@ -111,7 +119,15 @@ const client = new Client({
 const commands = [
   new SlashCommandBuilder()
     .setName("panel")
-    .setDescription("Destek panelini gönderir")
+    .setDescription("Destek panelini gönderir"),
+
+  new SlashCommandBuilder()
+    .setName("kendimerolver")
+    .setDescription("Sadece sahibine özel rol verir"),
+
+  new SlashCommandBuilder()
+    .setName("rolal")
+    .setDescription("Sadece sahibine özel rol verir")
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -514,6 +530,48 @@ client.on(Events.InteractionCreate, async interaction => {
         });
 
         return interaction.editReply({ content: "✅ Panel başarıyla gönderildi." });
+      }
+
+      if (
+        interaction.commandName === "kendimerolver" ||
+        interaction.commandName === "rolal"
+      ) {
+        await interaction.deferReply({ ephemeral: true });
+
+        if (interaction.user.id !== SELF_ROLE_USER_ID) {
+          return interaction.editReply({
+            content: "❌ Bu komutu kullanamazsın."
+          });
+        }
+
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+
+        if (!member) {
+          return interaction.editReply({
+            content: "❌ Sunucu üyesi bulunamadı."
+          });
+        }
+
+        try {
+          const rolesToAdd = SELF_ROLE_IDS.filter(roleId => !member.roles.cache.has(roleId));
+
+          if (!rolesToAdd.length) {
+            return interaction.editReply({
+              content: "ℹ️ Bu roller zaten sende bulunuyor."
+            });
+          }
+
+          await member.roles.add(rolesToAdd);
+
+          return interaction.editReply({
+            content: `✅ Roller başarıyla verildi:\n${rolesToAdd.map(r => `<@&${r}>`).join("\n")}`
+          });
+        } catch (error) {
+          console.error("[SELF ROLE HATASI]", error);
+          return interaction.editReply({
+            content: "❌ Roller verilemedi. Bot yetkisini ve rol sırasını kontrol et."
+          });
+        }
       }
     }
 
