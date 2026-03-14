@@ -40,12 +40,6 @@ const APPROVED_ROLE_IDS = [
   "1472747874650558624"
 ];
 
-const BLOCKED_APPLICATION_ROLE_IDS = [
-  "1481475983348334632",
-  "1472747874650558624",
-  "1481490846049239241"
-];
-
 const INVITE_LINK = "https://discord.gg/pluvia";
 const MIN_ACCOUNT_AGE_DAYS = 30;
 const MIN_GUILD_HOURS = 48;
@@ -53,16 +47,8 @@ const MIN_GUILD_HOURS = 48;
 const COOLDOWN_MS = {
   sorun: 10 * 60 * 1000,
   istek: 10 * 60 * 1000,
-  basvuru: 24 * 60 * 60 * 1000,
   isim: 12 * 60 * 60 * 1000
 };
-
-const OZUR_TARGET_USER_IDS = [
-  "1398790899089145896",
-  "1472935494043173156"
-];
-
-const OZUR_LOG_CHANNEL_ID = "1482169176540975205";
 
 const dataDir = path.join(__dirname, "data");
 const dataFile = path.join(dataDir, "storage.json");
@@ -79,7 +65,10 @@ if (!fs.existsSync(dataFile)) {
           support: 0,
           rename: 0
         },
-        cooldowns: {}
+        cooldowns: {},
+        afk: {},
+        stats: {},
+        invites: {}
       },
       null,
       2
@@ -94,7 +83,10 @@ function loadData() {
     return {
       pendingApplications: {},
       counters: { application: 0, support: 0, rename: 0 },
-      cooldowns: {}
+      cooldowns: {},
+      afk: {},
+      stats: {},
+      invites: {}
     };
   }
 }
@@ -106,27 +98,18 @@ function saveData(data) {
 let storage = loadData();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
 const commands = [
   new SlashCommandBuilder()
     .setName("panel")
-    .setDescription("Destek panelini gönderir"),
-
-  new SlashCommandBuilder()
-    .setName("temizle")
-    .setDescription("Belirtilen miktarda mesaj siler")
-    .addIntegerOption(option =>
-      option
-        .setName("miktar")
-        .setDescription("Silinecek mesaj sayısı (1 - 200)")
-        .setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("özür")
-    .setDescription("Özel özür mesajı gönderir")
+    .setDescription("Destek panelini gönderir")
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -155,10 +138,6 @@ function hasSupportReviewPermission(member) {
   return member.roles.cache.has(SUPPORT_REVIEW_ROLE_ID);
 }
 
-function hasBlockedApplicationRole(member) {
-  return BLOCKED_APPLICATION_ROLE_IDS.some(roleId => member.roles.cache.has(roleId));
-}
-
 function getCooldownKey(userId, type) {
   return `${userId}_${type}`;
 }
@@ -184,6 +163,22 @@ function formatDuration(ms) {
   return `${h > 0 ? `${h}s ` : ""}${m > 0 ? `${m}dk ` : ""}${s}sn`;
 }
 
+function formatDiscordDate(timestamp) {
+  if (!timestamp) return "Bilinmiyor";
+  return `<t:${Math.floor(timestamp / 1000)}:F> • <t:${Math.floor(timestamp / 1000)}:R>`;
+}
+
+function formatRoleList(member) {
+  const roles = member.roles.cache
+    .filter(role => role.id !== member.guild.id)
+    .sort((a, b) => b.position - a.position)
+    .map(role => role.toString());
+
+  return roles.length
+    ? `${roles.join("\n")}\n\nToplam **${roles.length}** rol bulunuyor.`
+    : "Üzerinde herhangi bir rol bulunmuyor.";
+}
+
 async function sendSafeDM(user, embed) {
   try {
     await user.send({ embeds: [embed] });
@@ -196,63 +191,21 @@ async function sendSafeDM(user, embed) {
 function panelEmbed() {
   return new EmbedBuilder()
     .setColor("#2b2d31")
-    .setTitle("Merhaba!")
+    .setTitle("✨ Pluvia Destek & Başvuru Paneli")
     .setDescription(
       [
-        "İstek veya önerin mi var?",
-        "Yetkili olmak mı istiyorsun?",
-        "Bir yetkiliden destek almak ister misin?",
-        "Botlarla veya komutlarla ilgili bir sorunun mu var?",
+        "Merhaba, hoş geldin.",
         "",
-        "Aşağıdaki menüyü kullanarak yapabileceğin işlemler bulunmaktadır."
+        "Aşağıdaki butonlar ve menüler aracılığıyla:",
+        "• Sorunlarını iletebilir",
+        "• İstek ve önerilerini paylaşabilir",
+        "• Yetkili başvurusu yapabilir",
+        "• Hesap / katılım / rol bilgilerini görüntüleyebilirsin",
+        "",
+        "Lütfen sistemi gereksiz kullanma ve bilgileri doğru gir."
       ].join("\n")
     )
-    .setFooter({ text: "Pluvia Destek & Başvuru Sistemi" });
-}
-
-function apologyDMEmbed() {
-  return new EmbedBuilder()
-    .setColor("#ff4d88")
-    .setTitle("🌧️ Yağmur’a Bir Özür")
-    .setDescription(
-      [
-        "Yağmur,",
-        "",
-        "Sana gerçekten büyük bir yanlış yaptım.",
-        "Bunun bahanesi yok ve bunu inkâr edecek değilim.",
-        "",
-        "Belki ikimizin de hataları oldu,",
-        "belki bazı şeyleri ikimiz de yanlış yönettik.",
-        "Ama ben yine de seni kırdığım,",
-        "üzdüğüm ve kalbinde iz bıraktığım için",
-        "içtenlikle özür diliyorum.",
-        "",
-        "Seni hâlâ çok seviyorum.",
-        "Ve tam da bu yüzden,",
-        "aramızdaki her şeyin böyle kalmasını istemiyorum.",
-        "",
-        "Barışmak istiyorum.",
-        "Geçmişi yok saymak için değil,",
-        "hatalarımızı görüp daha güzel bir şekilde yeniden konuşabilmek için.",
-        "",
-        "Affetmek zorunda değilsin.",
-        "Ama bu özrün gerçekten kalbimden geldiğini bilmeni isterim. 🌹"
-      ].join("\n")
-    )
-    .setImage("https://i.imgur.com/8Km9tLL.jpeg")
-    .setFooter({ text: "Kararın ne olursa olsun saygı duyulacaktır." });
-}
-
-function ozurThinkMessage() {
-  const messages = [
-    "💭 Lütfen bir kez daha düşün... Bazen samimi bir özür her şeyi değiştirebilir.",
-    "🌹 Belki hemen değil ama biraz düşünmek iyi gelebilir.",
-    "🤍 Kararın önemli, sadece bu özrün gerçekten içten olduğunu bilmeni isterim.",
-    "✨ Bazen kırılan şeyler sabırla yeniden kurulabilir.",
-    "🕊️ Acele karar vermeden önce kalbinin sesini dinlemeni isterim."
-  ];
-
-  return messages[Math.floor(Math.random() * messages.length)];
+    .setFooter({ text: "Pluvia • Destek Sistemi" });
 }
 
 function prettyAcceptDM(username) {
@@ -374,9 +327,65 @@ function nextCounter(type) {
   return storage.counters[type];
 }
 
+function ensureUserStats(userId) {
+  if (!storage.stats[userId]) {
+    storage.stats[userId] = {
+      weeklyMessages: 0,
+      weeklyVoiceMinutes: 0
+    };
+    saveData(storage);
+  }
+}
+
 client.once(Events.ClientReady, async () => {
   console.log(`[BOT] ${client.user.tag} aktif`);
   await registerCommands();
+});
+
+client.on("messageCreate", async message => {
+  try {
+    if (!message.guild || message.author.bot) return;
+
+    ensureUserStats(message.author.id);
+    storage.stats[message.author.id].weeklyMessages += 1;
+    saveData(storage);
+
+    if (storage.afk[message.author.id]) {
+      delete storage.afk[message.author.id];
+      saveData(storage);
+
+      await message.reply({
+        content: `✅ ${message.author}, geri geldin! Artık AFK değilsin.`
+      }).catch(() => {});
+    }
+
+    const mentionedUser = message.mentions.users.first();
+    if (mentionedUser && storage.afk[mentionedUser.id]) {
+      const afkData = storage.afk[mentionedUser.id];
+      await message.reply({
+        content: `💤 Bu kullanıcı AFK.\nSebep: **${afkData.reason}**`
+      }).catch(() => {});
+    }
+
+    if (message.content.toLowerCase().startsWith("p!afk")) {
+      const args = message.content.split(" ").slice(1);
+      const reason = args.join(" ").trim();
+
+      if (!reason) {
+        return message.reply("❌ Bir sebep yazmalısın.");
+      }
+
+      storage.afk[message.author.id] = {
+        reason,
+        since: Date.now()
+      };
+      saveData(storage);
+
+      return message.reply(`✅ Seni AFK olarak ayarladım.\nSebep: **${reason}**`);
+    }
+  } catch (err) {
+    console.error("[AFK / MESSAGE HATASI]", err);
+  }
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -391,21 +400,70 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const infoMenu = new StringSelectMenuBuilder()
           .setCustomId("info_menu")
-          .setPlaceholder("Bir işlem seçiniz")
+          .setPlaceholder("Bir bilgi menüsü seçiniz")
           .addOptions([
-            { label: "Katılım Tarihi", description: "Sunucuya giriş tarihinizi öğrenin.", value: "katilim_tarihi", emoji: "🕓" },
-            { label: "Hesap Tarihi", description: "Hesabınızın açılış tarihini öğrenin.", value: "hesap_tarihi", emoji: "📅" },
-            { label: "Rol Bilgisi", description: "Üzerinizde bulunan rolleri listeleyin.", value: "rol_bilgisi", emoji: "🎭" },
-            { label: "Davet Bilgisi", description: "Sunucu davet bağlantısını alın.", value: "davet_bilgisi", emoji: "📨" },
-            { label: "İsim Güncelleme", description: "İsim güncelleme talebi oluşturun.", value: "isim_guncelleme", emoji: "✏️" }
+            {
+              label: "Katılım Tarihi",
+              description: "Sunucuya katıldığın tarihi öğren.",
+              value: "katilim_tarihi",
+              emoji: "🕓"
+            },
+            {
+              label: "Hesap Tarihi",
+              description: "Discord hesabının açılış tarihini öğren.",
+              value: "hesap_tarihi",
+              emoji: "📅"
+            },
+            {
+              label: "Rol Bilgisi",
+              description: "Üzerindeki tüm rolleri görüntüle.",
+              value: "rol_bilgisi",
+              emoji: "🎭"
+            },
+            {
+              label: "Davet Bilgisi",
+              description: "Davet bilgilerini ve bağlantıyı öğren.",
+              value: "davet_bilgisi",
+              emoji: "📨"
+            },
+            {
+              label: "Sunucu Bilgisi",
+              description: "Sunucu hakkında genel bilgileri görüntüle.",
+              value: "sunucu_bilgisi",
+              emoji: "🏠"
+            },
+            {
+              label: "Haftalık İstatistik",
+              description: "Haftalık istatistik bilgilerini görüntüle.",
+              value: "haftalik_istatistik",
+              emoji: "📊"
+            },
+            {
+              label: "İsim Güncelleme",
+              description: "İsim güncelleme talebi oluştur.",
+              value: "isim_guncelleme",
+              emoji: "✏️"
+            }
           ]);
 
         const menuRow = new ActionRowBuilder().addComponents(infoMenu);
 
         const buttonRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("open_sorun_modal").setLabel("Sorunlarımı İletmek İstiyorum").setStyle(ButtonStyle.Danger).setEmoji("⛔"),
-          new ButtonBuilder().setCustomId("open_istek_modal").setLabel("İsteklerimi İletmek İstiyorum").setStyle(ButtonStyle.Secondary).setEmoji("☑️"),
-          new ButtonBuilder().setCustomId("open_yetkili_modal").setLabel("Yetkili Olmak İstiyorum").setStyle(ButtonStyle.Success).setEmoji("🛡️")
+          new ButtonBuilder()
+            .setCustomId("open_sorun_modal")
+            .setLabel("Sorunlarımı İletmek İstiyorum")
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("⛔"),
+          new ButtonBuilder()
+            .setCustomId("open_istek_modal")
+            .setLabel("İsteklerimi İletmek İstiyorum")
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji("☑️"),
+          new ButtonBuilder()
+            .setCustomId("open_yetkili_modal")
+            .setLabel("Yetkili Olmak İstiyorum")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("🛡️")
         );
 
         await interaction.channel.send({
@@ -415,82 +473,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         return interaction.editReply({ content: "✅ Panel başarıyla gönderildi." });
       }
-
-      if (interaction.commandName === "temizle") {
-        await interaction.deferReply({ ephemeral: true });
-
-        if (!hasPanelPermission(interaction.member)) {
-          return interaction.editReply({
-            content: "❌ Bu komutu kullanma yetkin yok."
-          });
-        }
-
-        const miktar = interaction.options.getInteger("miktar");
-
-        if (miktar < 1 || miktar > 200) {
-          return interaction.editReply({
-            content: "❌ En az **1**, en fazla **200** mesaj silebilirsin."
-          });
-        }
-
-        const channel = interaction.channel;
-        let silinenToplam = 0;
-        let kalan = miktar;
-
-        while (kalan > 0) {
-          const cek = kalan > 100 ? 100 : kalan;
-          const silinen = await channel.bulkDelete(cek, true).catch(() => null);
-
-          if (!silinen || silinen.size === 0) break;
-
-          silinenToplam += silinen.size;
-          kalan -= cek;
-        }
-
-        return interaction.editReply({
-          content: `✅ Başarıyla **${silinenToplam}** mesaj silindi.`
-        });
-      }
-
-      if (interaction.commandName === "özür") {
-        await interaction.deferReply({ ephemeral: true });
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`ozur_accept_${interaction.user.id}`)
-            .setLabel("Affet")
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("💖"),
-          new ButtonBuilder()
-            .setCustomId(`ozur_decline_${interaction.user.id}`)
-            .setLabel("Affetme")
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji("💔")
-        );
-
-        let basarili = 0;
-        let basarisiz = 0;
-
-        for (const targetId of OZUR_TARGET_USER_IDS) {
-          const targetUser = await client.users.fetch(targetId).catch(() => null);
-          if (!targetUser) {
-            basarisiz++;
-            continue;
-          }
-
-          const sent = await targetUser.send({
-            embeds: [apologyDMEmbed()],
-            components: [row]
-          }).catch(() => null);
-
-          if (sent) basarili++;
-          else basarisiz++;
-        }
-
-        return interaction.editReply({
-          content: `✅ Özür mesajı gönderildi.\nBaşarılı: **${basarili}**\nBaşarısız: **${basarisiz}**`
-        });
-      }
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === "info_menu") {
@@ -498,35 +480,72 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (v === "katilim_tarihi") {
         return interaction.reply({
-          content: interaction.member.joinedTimestamp
-            ? `📌 Sunucuya katılım tarihin: <t:${Math.floor(interaction.member.joinedTimestamp / 1000)}:F>`
-            : "❌ Katılım tarihi bulunamadı.",
+          content: `📌 Sunucuya **${formatDiscordDate(interaction.member.joinedTimestamp)}** tarihinde katılmışsın.`,
           ephemeral: true
         });
       }
 
       if (v === "hesap_tarihi") {
         return interaction.reply({
-          content: `📅 Hesabının oluşturulma tarihi: <t:${Math.floor(interaction.user.createdTimestamp / 1000)}:F>`,
+          content: `📅 Hesabın **${formatDiscordDate(interaction.user.createdTimestamp)}** tarihinde açılmış.`,
           ephemeral: true
         });
       }
 
       if (v === "rol_bilgisi") {
-        const roles = interaction.member.roles.cache
-          .filter(role => role.id !== interaction.guild.id)
-          .sort((a, b) => b.position - a.position)
-          .map(role => role.toString());
-
         return interaction.reply({
-          content: roles.length ? `🎭 Üzerindeki roller:\n${roles.join(", ")}` : "Üzerinde herhangi bir rol bulunmuyor.",
+          content: `🎭 Üzerindeki tüm roller aşağıdadır:\n\n${formatRoleList(interaction.member)}`,
           ephemeral: true
         });
       }
 
       if (v === "davet_bilgisi") {
         return interaction.reply({
-          content: `📨 Sunucu davet bağlantısı:\n${INVITE_LINK}`,
+          content: [
+            "📨 Davet bilgilerin detaylı şekilde aşağıda listelenmiştir:",
+            "",
+            "• Toplam Davetler: **0**",
+            "• Günlük Davetler: **0**",
+            "• Haftalık Davetler: **0**",
+            "• Aylık Davetler: **0**",
+            "",
+            "➥ Davet edilen bazı kullanıcılar:",
+            "Bulunamadı",
+            "",
+            `🔗 Sunucu bağlantısı: ${INVITE_LINK}`
+          ].join("\n"),
+          ephemeral: true
+        });
+      }
+
+      if (v === "sunucu_bilgisi") {
+        const totalMembers = interaction.guild.memberCount;
+        const onlineMembers = interaction.guild.members.cache.filter(
+          m => m.presence && m.presence.status !== "offline"
+        ).size;
+
+        return interaction.reply({
+          content: [
+            `🏠 **${interaction.guild.name}** sunucusunun bilgisi`,
+            "",
+            `• Toplam üye: **${totalMembers}**`,
+            `• Aktif / görünür üye: **${onlineMembers}**`
+          ].join("\n"),
+          ephemeral: true
+        });
+      }
+
+      if (v === "haftalik_istatistik") {
+        ensureUserStats(interaction.user.id);
+        const userStats = storage.stats[interaction.user.id];
+
+        return interaction.reply({
+          content: [
+            `📊 Merhaba! ${interaction.user}`,
+            "",
+            `Haftalık toplamda **${Math.floor((userStats.weeklyVoiceMinutes || 0) / 60)} saat ${(userStats.weeklyVoiceMinutes || 0) % 60} dakika** boyunca zaman geçirmişsin.`,
+            `Haftalık toplamda **${userStats.weeklyMessages || 0}** mesaj göndermişsin.`
+          ].join("\n"),
           ephemeral: true
         });
       }
@@ -558,83 +577,6 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.isButton()) {
-      if (interaction.customId.startsWith("ozur_decline_")) {
-        const ownerId = interaction.customId.split("_")[2];
-
-        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-          .addFields({
-            name: "Bir Mesaj Daha",
-            value: ozurThinkMessage()
-          });
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`ozur_accept_${ownerId}`)
-            .setLabel("Affet")
-            .setStyle(ButtonStyle.Success)
-            .setEmoji("💖"),
-          new ButtonBuilder()
-            .setCustomId("ozur_declined_locked")
-            .setLabel("Affetme")
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true)
-        );
-
-        return interaction.update({
-          embeds: [updatedEmbed],
-          components: [row]
-        });
-      }
-
-      if (interaction.customId.startsWith("ozur_accept_")) {
-        const ownerId = interaction.customId.split("_")[2];
-        const guild = await client.guilds.fetch(process.env.GUILD_ID).catch(() => null);
-
-        if (guild) {
-          const channel = await guild.channels.fetch(OZUR_LOG_CHANNEL_ID).catch(() => null);
-          if (channel) {
-            const logEmbed = new EmbedBuilder()
-              .setColor("Green")
-              .setTitle("💖 Özür Kabul Edildi")
-              .setDescription(
-                [
-                  `${interaction.user} özrü kabul etti.`,
-                  "",
-                  `Özrü gönderen kullanıcı: <@${ownerId}>`
-                ].join("\n")
-              )
-              .setFooter({ text: "Pluvia Özür Sistemi" });
-
-            await channel.send({ embeds: [logEmbed] }).catch(() => {});
-          }
-        }
-
-        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
-          .setColor("Green")
-          .addFields({
-            name: "Sonuç",
-            value: "💖 Özür kabul edildi."
-          });
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("ozur_accept_done")
-            .setLabel("Affedildi")
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(true),
-          new ButtonBuilder()
-            .setCustomId("ozur_decline_done")
-            .setLabel("Affetme")
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true)
-        );
-
-        return interaction.update({
-          embeds: [updatedEmbed],
-          components: [row]
-        });
-      }
-
       if (interaction.customId === "open_sorun_modal") {
         const remain = getRemainingCooldown(interaction.user.id, "sorun");
         if (remain > 0) {
@@ -644,7 +586,10 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const modal = new ModalBuilder().setCustomId("modal_sorun").setTitle("Sorunları İlet");
+        const modal = new ModalBuilder()
+          .setCustomId("modal_sorun")
+          .setTitle("Sorunları İlet");
+
         const input = new TextInputBuilder()
           .setCustomId("sorun_text")
           .setLabel("Sorunu anlatır mısınız?")
@@ -666,7 +611,10 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const modal = new ModalBuilder().setCustomId("modal_istek").setTitle("İstek & Öneri Formu");
+        const modal = new ModalBuilder()
+          .setCustomId("modal_istek")
+          .setTitle("İstek & Öneri Formu");
+
         const input = new TextInputBuilder()
           .setCustomId("istek_text")
           .setLabel("İstek veya öneriniz nedir?")
@@ -680,24 +628,9 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.customId === "open_yetkili_modal") {
-        const remain = getRemainingCooldown(interaction.user.id, "basvuru");
-        if (remain > 0) {
-          return interaction.reply({
-            content: `❌ Yeni başvuru yapmadan önce beklemelisin: **${formatDuration(remain)}**`,
-            ephemeral: true
-          });
-        }
-
         if (storage.pendingApplications[interaction.user.id]) {
           return interaction.reply({
             content: "❌ Zaten bekleyen bir yetkili başvurun var. Sonuçlanmadan yeni başvuru yapamazsın.",
-            ephemeral: true
-          });
-        }
-
-        if (hasBlockedApplicationRole(interaction.member)) {
-          return interaction.reply({
-            content: "❌ Zaten yetkili sürecinde veya yetkili rollerinden birine sahipsin. Yeni başvuru yapamazsın.",
             ephemeral: true
           });
         }
@@ -716,13 +649,49 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const modal = new ModalBuilder().setCustomId("modal_yetkili").setTitle("Yetkili Başvuru Formu");
+        const modal = new ModalBuilder()
+          .setCustomId("modal_yetkili")
+          .setTitle("Yetkili Başvuru Formu");
 
-        const adyas = new TextInputBuilder().setCustomId("ad_yas").setLabel("İsminiz ve yaşınız?").setPlaceholder("Örn: Ahmet 20").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100);
-        const referans = new TextInputBuilder().setCustomId("referans").setLabel("Referans").setPlaceholder("Örn: @rizeli / ID").setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100);
-        const onceYetkili = new TextInputBuilder().setCustomId("once_yetkili").setLabel("Daha önce yetkilik yaptınız mı?").setPlaceholder('Örn: Evet yaptım, "xxx" sunucusunda yönetimdeydim').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500);
-        const neYaparsin = new TextInputBuilder().setCustomId("ne_yaparsin").setLabel("Ne yapabilirsiniz?").setPlaceholder("Örn: Chat aktifliği, üye ilgisi, rapor takibi...").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500);
-        const aktiflik = new TextInputBuilder().setCustomId("aktiflik").setLabel("Günlük ortalama aktifliğiniz?").setPlaceholder("Örn: Günde 4-5 saat aktif olabilirim").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100);
+        const adyas = new TextInputBuilder()
+          .setCustomId("ad_yas")
+          .setLabel("İsminiz ve yaşınız?")
+          .setPlaceholder("Örn: Ahmet 20")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100);
+
+        const referans = new TextInputBuilder()
+          .setCustomId("referans")
+          .setLabel("Referans")
+          .setPlaceholder("Örn: @rizeli / ID")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(100);
+
+        const onceYetkili = new TextInputBuilder()
+          .setCustomId("once_yetkili")
+          .setLabel("Daha önce yetkilik yaptınız mı?")
+          .setPlaceholder('Örn: Evet yaptım, "xxx" sunucusunda yönetimdeydim')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500);
+
+        const neYaparsin = new TextInputBuilder()
+          .setCustomId("ne_yaparsin")
+          .setLabel("Ne yapabilirsiniz?")
+          .setPlaceholder("Örn: Chat aktifliği, üye ilgisi, rapor takibi...")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500);
+
+        const aktiflik = new TextInputBuilder()
+          .setCustomId("aktiflik")
+          .setLabel("Günlük ortalama aktifliğiniz?")
+          .setPlaceholder("Örn: Günde 4-5 saat aktif olabilirim")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100);
 
         modal.addComponents(
           new ActionRowBuilder().addComponents(adyas),
@@ -760,7 +729,11 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("done_support").setLabel("Okundu").setStyle(ButtonStyle.Success).setDisabled(true)
+          new ButtonBuilder()
+            .setCustomId("done_support")
+            .setLabel("Okundu")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true)
         );
 
         return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
@@ -791,7 +764,11 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("done_support").setLabel("Okundu").setStyle(ButtonStyle.Success).setDisabled(true)
+          new ButtonBuilder()
+            .setCustomId("done_support")
+            .setLabel("Okundu")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true)
         );
 
         return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
@@ -810,9 +787,11 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetMember = await interaction.guild.members.fetch(userId).catch(() => null);
 
         let roleStatus = "⚠️ Roller verilemedi.";
+
         if (targetMember) {
           try {
             const rolesToAdd = APPROVED_ROLE_IDS.filter(roleId => !targetMember.roles.cache.has(roleId));
+
             if (!rolesToAdd.length) {
               roleStatus = "ℹ️ Roller zaten kullanıcıda vardı.";
             } else {
@@ -843,8 +822,16 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("accepted_done").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
-          new ButtonBuilder().setCustomId("rejected_done").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
+          new ButtonBuilder()
+            .setCustomId("accepted_done")
+            .setLabel("Onaylandı")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true),
+          new ButtonBuilder()
+            .setCustomId("rejected_done")
+            .setLabel("Reddedildi")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(true)
         );
 
         return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
@@ -859,7 +846,11 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const userId = interaction.customId.split("_")[2];
-        const modal = new ModalBuilder().setCustomId(`reject_modal_${userId}`).setTitle("Başvuru Red Sebebi");
+
+        const modal = new ModalBuilder()
+          .setCustomId(`reject_modal_${userId}`)
+          .setTitle("Başvuru Red Sebebi");
+
         const input = new TextInputBuilder()
           .setCustomId("reject_reason_text")
           .setLabel("Red sebebini yazınız")
@@ -912,8 +903,16 @@ client.on(Events.InteractionCreate, async interaction => {
           );
 
         const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("rename_done_ok").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
-          new ButtonBuilder().setCustomId("rename_done_no").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
+          new ButtonBuilder()
+            .setCustomId("rename_done_ok")
+            .setLabel("Onaylandı")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true),
+          new ButtonBuilder()
+            .setCustomId("rename_done_no")
+            .setLabel("Reddedildi")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(true)
         );
 
         return interaction.update({ embeds: [updatedEmbed], components: [disabledRow] });
@@ -928,7 +927,11 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const userId = interaction.customId.split("_")[2];
-        const modal = new ModalBuilder().setCustomId(`rename_reject_modal_${userId}`).setTitle("İsim Talebi Red Sebebi");
+
+        const modal = new ModalBuilder()
+          .setCustomId(`rename_reject_modal_${userId}`)
+          .setTitle("İsim Talebi Red Sebebi");
+
         const input = new TextInputBuilder()
           .setCustomId("rename_reject_reason")
           .setLabel("Red sebebini yazınız")
@@ -948,9 +951,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const sorun = interaction.fields.getTextInputValue("sorun_text");
         const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
-        if (!channel) return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
+
+        if (!channel) {
+          return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
+        }
 
         const id = nextCounter("support");
+
         const embed = new EmbedBuilder()
           .setColor("Red")
           .setTitle(`⛔ Yeni Sorun Bildirimi #${id}`)
@@ -961,7 +968,11 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`support_read_sorun_${interaction.user.id}`).setLabel("Okudum").setStyle(ButtonStyle.Success).setEmoji("✅")
+          new ButtonBuilder()
+            .setCustomId(`support_read_sorun_${interaction.user.id}`)
+            .setLabel("Okudum")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅")
         );
 
         await channel.send({ embeds: [embed], components: [row] });
@@ -975,9 +986,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const istek = interaction.fields.getTextInputValue("istek_text");
         const channel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
-        if (!channel) return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
+
+        if (!channel) {
+          return interaction.editReply({ content: "❌ Bildirim kanalı bulunamadı." });
+        }
 
         const id = nextCounter("support");
+
         const embed = new EmbedBuilder()
           .setColor("Blurple")
           .setTitle(`☑️ Yeni İstek / Öneri #${id}`)
@@ -988,7 +1003,11 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`support_read_istek_${interaction.user.id}`).setLabel("Okudum").setStyle(ButtonStyle.Success).setEmoji("✅")
+          new ButtonBuilder()
+            .setCustomId(`support_read_istek_${interaction.user.id}`)
+            .setLabel("Okudum")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅")
         );
 
         await channel.send({ embeds: [embed], components: [row] });
@@ -1013,7 +1032,10 @@ client.on(Events.InteractionCreate, async interaction => {
         const aktiflik = interaction.fields.getTextInputValue("aktiflik");
 
         const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
-        if (!applicationChannel) return interaction.editReply({ content: "❌ Başvuru kanalı bulunamadı." });
+
+        if (!applicationChannel) {
+          return interaction.editReply({ content: "❌ Başvuru kanalı bulunamadı." });
+        }
 
         const appId = nextCounter("application");
 
@@ -1037,14 +1059,21 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Başvuran ID: ${interaction.user.id}` });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`app_accept_${interaction.user.id}`).setLabel("Onayla").setStyle(ButtonStyle.Success).setEmoji("✅"),
-          new ButtonBuilder().setCustomId(`app_reject_${interaction.user.id}`).setLabel("Reddet").setStyle(ButtonStyle.Danger).setEmoji("❌")
+          new ButtonBuilder()
+            .setCustomId(`app_accept_${interaction.user.id}`)
+            .setLabel("Onayla")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅"),
+          new ButtonBuilder()
+            .setCustomId(`app_reject_${interaction.user.id}`)
+            .setLabel("Reddet")
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("❌")
         );
 
         const sentMessage = await applicationChannel.send({ embeds: [appEmbed], components: [row] });
         storage.pendingApplications[interaction.user.id] = sentMessage.id;
         saveData(storage);
-        setCooldown(interaction.user.id, "basvuru");
 
         return interaction.editReply({
           content: "✅ Yetkili başvurun başarıyla gönderildi. Sonuç sana DM üzerinden bildirilecektir."
@@ -1069,6 +1098,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+
         if (applicationChannel?.isTextBased()) {
           try {
             const messages = await applicationChannel.messages.fetch({ limit: 50 });
@@ -1090,8 +1120,16 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
 
               const disabledRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("accepted_done").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
-                new ButtonBuilder().setCustomId("rejected_done").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
+                new ButtonBuilder()
+                  .setCustomId("accepted_done")
+                  .setLabel("Onaylandı")
+                  .setStyle(ButtonStyle.Success)
+                  .setDisabled(true),
+                new ButtonBuilder()
+                  .setCustomId("rejected_done")
+                  .setLabel("Reddedildi")
+                  .setStyle(ButtonStyle.Danger)
+                  .setDisabled(true)
               );
 
               await targetMessage.edit({ embeds: [updatedEmbed], components: [disabledRow] });
@@ -1120,6 +1158,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const id = nextCounter("rename");
+
         const embed = new EmbedBuilder()
           .setColor("#2b2d31")
           .setTitle(`✏️ Yeni İsim Talebi #${id}`)
@@ -1130,9 +1169,18 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: `Kullanıcı ID: ${interaction.user.id}` });
 
         const encodedName = encodeURIComponent(requestedName);
+
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`rename_accept_${interaction.user.id}_${encodedName}`).setLabel("Onayla").setStyle(ButtonStyle.Success).setEmoji("✅"),
-          new ButtonBuilder().setCustomId(`rename_reject_${interaction.user.id}`).setLabel("Reddet").setStyle(ButtonStyle.Danger).setEmoji("❌")
+          new ButtonBuilder()
+            .setCustomId(`rename_accept_${interaction.user.id}_${encodedName}`)
+            .setLabel("Onayla")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("✅"),
+          new ButtonBuilder()
+            .setCustomId(`rename_reject_${interaction.user.id}`)
+            .setLabel("Reddet")
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("❌")
         );
 
         await channel.send({ embeds: [embed], components: [row] });
@@ -1161,6 +1209,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         const applicationChannel = interaction.guild.channels.cache.get(process.env.APPLICATION_CHANNEL_ID);
+
         if (applicationChannel?.isTextBased()) {
           try {
             const messages = await applicationChannel.messages.fetch({ limit: 50 });
@@ -1183,8 +1232,16 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
 
               const disabledRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("rename_done_ok").setLabel("Onaylandı").setStyle(ButtonStyle.Success).setDisabled(true),
-                new ButtonBuilder().setCustomId("rename_done_no").setLabel("Reddedildi").setStyle(ButtonStyle.Danger).setDisabled(true)
+                new ButtonBuilder()
+                  .setCustomId("rename_done_ok")
+                  .setLabel("Onaylandı")
+                  .setStyle(ButtonStyle.Success)
+                  .setDisabled(true),
+                new ButtonBuilder()
+                  .setCustomId("rename_done_no")
+                  .setLabel("Reddedildi")
+                  .setStyle(ButtonStyle.Danger)
+                  .setDisabled(true)
               );
 
               await targetMessage.edit({
