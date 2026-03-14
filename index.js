@@ -57,6 +57,13 @@ const COOLDOWN_MS = {
   isim: 12 * 60 * 60 * 1000
 };
 
+const OZUR_TARGET_USER_IDS = [
+  "1398790899089145896",
+  "1472935494043173156"
+];
+
+const OZUR_LOG_CHANNEL_ID = "1482169176540975205";
+
 const dataDir = path.join(__dirname, "data");
 const dataFile = path.join(dataDir, "storage.json");
 
@@ -119,7 +126,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("özür")
-    .setDescription("Yağmur için özel özür embedi gönderir")
+    .setDescription("Özel özür mesajı gönderir")
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -203,7 +210,7 @@ function panelEmbed() {
     .setFooter({ text: "Pluvia Destek & Başvuru Sistemi" });
 }
 
-function apologyEmbed() {
+function apologyDMEmbed() {
   return new EmbedBuilder()
     .setColor("#ff4d88")
     .setTitle("🌧️ Yağmur’a Bir Özür")
@@ -233,7 +240,19 @@ function apologyEmbed() {
       ].join("\n")
     )
     .setImage("https://i.imgur.com/8Km9tLL.jpeg")
-    .setFooter({ text: "Bazen en gerçek şey, samimi bir özürdür." });
+    .setFooter({ text: "Kararın ne olursa olsun saygı duyulacaktır." });
+}
+
+function ozurThinkMessage() {
+  const messages = [
+    "💭 Lütfen bir kez daha düşün... Bazen samimi bir özür her şeyi değiştirebilir.",
+    "🌹 Belki hemen değil ama biraz düşünmek iyi gelebilir.",
+    "🤍 Kararın önemli, sadece bu özrün gerçekten içten olduğunu bilmeni isterim.",
+    "✨ Bazen kırılan şeyler sabırla yeniden kurulabilir.",
+    "🕊️ Acele karar vermeden önce kalbinin sesini dinlemeni isterim."
+  ];
+
+  return messages[Math.floor(Math.random() * messages.length)];
 }
 
 function prettyAcceptDM(username) {
@@ -434,8 +453,42 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (interaction.commandName === "özür") {
-        return interaction.reply({
-          embeds: [apologyEmbed()]
+        await interaction.deferReply({ ephemeral: true });
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ozur_accept_${interaction.user.id}`)
+            .setLabel("Affet")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("💖"),
+          new ButtonBuilder()
+            .setCustomId(`ozur_decline_${interaction.user.id}`)
+            .setLabel("Affetme")
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("💔")
+        );
+
+        let basarili = 0;
+        let basarisiz = 0;
+
+        for (const targetId of OZUR_TARGET_USER_IDS) {
+          const targetUser = await client.users.fetch(targetId).catch(() => null);
+          if (!targetUser) {
+            basarisiz++;
+            continue;
+          }
+
+          const sent = await targetUser.send({
+            embeds: [apologyDMEmbed()],
+            components: [row]
+          }).catch(() => null);
+
+          if (sent) basarili++;
+          else basarisiz++;
+        }
+
+        return interaction.editReply({
+          content: `✅ Özür mesajı gönderildi.\nBaşarılı: **${basarili}**\nBaşarısız: **${basarisiz}**`
         });
       }
     }
@@ -505,6 +558,83 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith("ozur_decline_")) {
+        const ownerId = interaction.customId.split("_")[2];
+
+        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .addFields({
+            name: "Bir Mesaj Daha",
+            value: ozurThinkMessage()
+          });
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ozur_accept_${ownerId}`)
+            .setLabel("Affet")
+            .setStyle(ButtonStyle.Success)
+            .setEmoji("💖"),
+          new ButtonBuilder()
+            .setCustomId("ozur_declined_locked")
+            .setLabel("Affetme")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true)
+        );
+
+        return interaction.update({
+          embeds: [updatedEmbed],
+          components: [row]
+        });
+      }
+
+      if (interaction.customId.startsWith("ozur_accept_")) {
+        const ownerId = interaction.customId.split("_")[2];
+        const guild = await client.guilds.fetch(process.env.GUILD_ID).catch(() => null);
+
+        if (guild) {
+          const channel = await guild.channels.fetch(OZUR_LOG_CHANNEL_ID).catch(() => null);
+          if (channel) {
+            const logEmbed = new EmbedBuilder()
+              .setColor("Green")
+              .setTitle("💖 Özür Kabul Edildi")
+              .setDescription(
+                [
+                  `${interaction.user} özrü kabul etti.`,
+                  "",
+                  `Özrü gönderen kullanıcı: <@${ownerId}>`
+                ].join("\n")
+              )
+              .setFooter({ text: "Pluvia Özür Sistemi" });
+
+            await channel.send({ embeds: [logEmbed] }).catch(() => {});
+          }
+        }
+
+        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor("Green")
+          .addFields({
+            name: "Sonuç",
+            value: "💖 Özür kabul edildi."
+          });
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("ozur_accept_done")
+            .setLabel("Affedildi")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(true),
+          new ButtonBuilder()
+            .setCustomId("ozur_decline_done")
+            .setLabel("Affetme")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true)
+        );
+
+        return interaction.update({
+          embeds: [updatedEmbed],
+          components: [row]
+        });
+      }
+
       if (interaction.customId === "open_sorun_modal") {
         const remain = getRemainingCooldown(interaction.user.id, "sorun");
         if (remain > 0) {
