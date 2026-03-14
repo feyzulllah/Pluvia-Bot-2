@@ -102,7 +102,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildInvites
   ]
 });
 
@@ -500,23 +501,38 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (v === "davet_bilgisi") {
-        return interaction.reply({
-          content: [
-            "📨 Davet bilgilerin detaylı şekilde aşağıda listelenmiştir:",
-            "",
-            "• Toplam Davetler: **0**",
-            "• Günlük Davetler: **0**",
-            "• Haftalık Davetler: **0**",
-            "• Aylık Davetler: **0**",
-            "",
-            "➥ Davet edilen bazı kullanıcılar:",
-            "Bulunamadı",
-            "",
-            `🔗 Sunucu bağlantısı: ${INVITE_LINK}`
-          ].join("\n"),
-          ephemeral: true
-        });
-      }
+  const userInviteData = storage.invites?.[interaction.user.id] || {
+    total: 0,
+    daily: 0,
+    weekly: 0,
+    monthly: 0,
+    invitedUsers: []
+  };
+
+  const invitedList = userInviteData.invitedUsers.length
+    ? userInviteData.invitedUsers
+        .slice(0, 10)
+        .map((name, index) => `• ${index + 1}. ${name}`)
+        .join("\n")
+    : "Bulunamadı";
+
+  return interaction.reply({
+    content: [
+      "📨 Aşağıda davet bilgilerin detaylı bir şekilde listelendirilmiştir:",
+      "",
+      `• Toplam Davetler: **${userInviteData.total || 0}**`,
+      `• Günlük Davetler: **${userInviteData.daily || 0}**`,
+      `• Haftalık Davetler: **${userInviteData.weekly || 0}**`,
+      `• Aylık Davetler: **${userInviteData.monthly || 0}**`,
+      "",
+      "➥ Davet edilen bazı kullanıcılar:",
+      invitedList,
+      "",
+      `🔗 Sınırsız davet bağlantısı: ${INVITE_LINK}`
+    ].join("\n"),
+    ephemeral: true
+  });
+}
 
       if (v === "sunucu_bilgisi") {
         const totalMembers = interaction.guild.memberCount;
